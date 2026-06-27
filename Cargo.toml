@@ -1,0 +1,43 @@
+[workspace]
+members = ["crates/core"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+
+# Release profile tuned for the crypto/erasure hot path: fat LTO + a single
+# codegen unit let the optimizer inline across the pipeline, and native CPU
+# targeting unlocks AES-NI / VAES / AVX2 without a runtime feature gate.
+# (Set RUSTFLAGS="-C target-cpu=native" for local benches; CI pins a baseline.)
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+[profile.bench]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+
+[workspace.dependencies]
+# Content encryption — AWS-LC (BoringSSL fork) with assembly AES-256-GCM
+# (AES-NI + VAES). Constant-time, FIPS-validatable.
+aws-lc-rs = "1"
+# Erasure coding — SIMD Reed-Solomon (replaces ptopnas's software reed-solomon-erasure).
+reed-solomon-simd = "3"
+# Compression (fast levels only; gated by an entropy probe).
+zstd = "0.13"
+# Data-parallel chunk pipeline.
+rayon = "1"
+# Hashing / content addressing.
+blake3 = "1"
+# Key hygiene.
+zeroize = { version = "1", features = ["derive"] }
+# Node identity key derivation (one-shot at unlock).
+argon2 = "0.5"
+rand = "0.8"
+thiserror = "1"
+hex = "0.4"

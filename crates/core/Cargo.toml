@@ -1,0 +1,27 @@
+[package]
+name = "p2pnas-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "p2pnas — chunk/crypto/erasure pipeline (performance core)"
+
+[dependencies]
+aws-lc-rs = { workspace = true }
+reed-solomon-simd = { workspace = true }
+zstd = { workspace = true }
+rayon = { workspace = true }
+blake3 = { workspace = true }
+zeroize = { workspace = true }
+argon2 = { workspace = true }
+rand = { workspace = true }
+thiserror = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+# RustCrypto AES-GCM kept ONLY as a baseline to contrast against aws-lc-rs in benches.
+aes-gcm = "0.10"
+
+[[bench]]
+name = "pipeline"
+harness = false
