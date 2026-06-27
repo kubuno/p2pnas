@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": false,
+    "types": ["vite/client"],
+    "paths": {
+      "@ui": ["./node_modules/@kubuno/ui/types/index.d.ts"],
+      "@ui/*": ["./node_modules/@kubuno/ui/types/*.d.ts"]
+    }
+  },
+  "include": ["src"]
+}
