@@ -1,26 +1,27 @@
 /**
  * p2pnas module entry — loaded at runtime by the host, which calls `register()`.
- * Shared specifiers (react, @kubuno/sdk, @ui…) are `external` and resolved by the
- * host import map. `sdkVersion` lets the host reject a contract mismatch.
+ *
+ * p2pnas declares NO launcher app / sidebar entry: it is a storage backend. It
+ * publishes a "My Cloud" mount through ModuleServiceRegistry, which Drive picks
+ * up and shows next to "Mon Drive". Only the admin settings page has a route.
  */
 import { lazy } from 'react'
-import { RouteRegistry, ModuleSettingsRegistry, WaffleAppRegistry, SDK_VERSION } from '@kubuno/sdk'
+import { RouteRegistry, ModuleSettingsRegistry, ModuleServiceRegistry, SDK_VERSION } from '@kubuno/sdk'
 import './index.css'
-import P2pnasLogo from './P2pnasLogo'
+import { myCloudSource } from './myCloudSource'
 
 export const sdkVersion = SDK_VERSION
 
 export function register() {
-  // App-launcher (waffle) entry → "My Cloud".
-  WaffleAppRegistry.register('p2pnas', 'My Cloud', [
-    { id: 'p2pnas', label: 'My Cloud', Icon: P2pnasLogo, path: '/p2pnas' },
-  ])
+  // Storage mount(s) this module provides to Drive. Drive enumerates active
+  // modules and calls these; returning undefined means "no mounts".
+  ModuleServiceRegistry.publish('p2pnas', {
+    getStorageMounts: () => [{ key: 'my-cloud', name: 'My Cloud' }],
+    getStorageSource: (_key: string) => myCloudSource(),
+  })
 
-  // Header gear opens the per-user settings while in /p2pnas.
+  // Admin/settings page (reachable via the admin module list `settings_path`).
   ModuleSettingsRegistry.register('p2pnas')
-
-  const MyCloudApp = lazy(() => import('./MyCloudApp'))
   const SettingsPage = lazy(() => import('./P2pnasSettingsPage'))
-  RouteRegistry.register('p2pnas', MyCloudApp)
   RouteRegistry.register('p2pnas/settings', SettingsPage)
 }

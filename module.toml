@@ -1,8 +1,10 @@
 [module]
 id           = "p2pnas"
-display_name = "My Cloud"
+# Technical module name shown in the admin module list. The user-facing storage
+# it provides appears in Drive as a "My Cloud" mount (not as a launcher app).
+display_name = "p2pnas"
 version      = "0.1.0"
-description  = "Stockage pair-à-pair chiffré et auto-réparant (résilience par le réseau de connaissances)"
+description  = "Stockage pair-à-pair chiffré et auto-réparant (montage « My Cloud » dans Drive)"
 author       = "Kubuno Contributors"
 license      = "AGPL-3.0"
 runtime      = "rust"
@@ -21,13 +23,8 @@ patterns = [
     { method = "*", path = "/*" },
 ]
 
-[[sidebar_items]]
-id       = "p2pnas"
-label    = "My Cloud"
-icon     = "Cloud"
-path     = "/p2pnas"
-position = 12
-section  = "main"
+# No sidebar_items / launcher app on purpose: p2pnas is a storage backend. Its
+# "My Cloud" surface appears inside Drive as a mount (see the frontend).
 
 [events]
 # Cleans up a user's quota row when their account is removed.
