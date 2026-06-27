@@ -8,6 +8,11 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
+// Match the production binary: a per-thread-heap allocator so parallel chunk
+// processing isn't serialised by the global malloc lock / mmap churn.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use p2pnas_core::{
     chunker::{maybe_compress, DEFAULT_ENTROPY_SKIP, FAST_ZSTD_LEVEL},
     crypto::DataKey,

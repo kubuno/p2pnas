@@ -8,6 +8,13 @@ use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use std::time::Duration;
 
+// Per-thread-heap allocator for the whole module: the data-parallel crypto/erasure
+// pipeline (rayon) is allocation-heavy, and glibc's arena/mmap contention otherwise
+// makes parallel processing *slower* than sequential on memory-bound (incompressible)
+// data. See BENCHMARKS.md.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 const MODULE_ID: &str = "p2pnas";
 
 // ── module.toml ────────────────────────────────────────────────────────────────

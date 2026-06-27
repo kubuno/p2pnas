@@ -21,23 +21,30 @@ Two inputs: **incompressible** (≈ media / already-encrypted) and **compressibl
    bound.
 4. **Software AES** is not the issue — aws-lc-rs (AES-NI/VAES) does ~3.9 GiB/s.
 
-## Results (64 MiB, GiB/s, median)
+## Results (64 MiB, GiB/s, median, mimalloc allocator)
 | | ptopnas-style | p2pnas seq | p2pnas seq (no RS) | p2pnas parallel |
 |---|---|---|---|---|
-| incompressible | 1.46 | **1.63** | 3.26 | 1.05 |
-| compressible | 3.93 | 4.88 | 5.03 | **9.75** |
+| incompressible | 1.74 | 1.54 | 2.73 | **2.32** |
+| compressible | 4.60 | 4.70 | 4.85 | **8.38** |
 
 Primitive: AEAD 4 MiB — aws-lc-rs **3.90 GiB/s** vs RustCrypto 1.48 GiB/s (**2.6×**).
 
+## Fixing the parallel regression (incompressible)
+A first cut had **parallel *slower* than sequential** on incompressible data (1.05 vs
+1.63 GiB/s). Two causes, both fixed:
+1. **A 4 MiB realloc per chunk** — the in-place `seal` appends the GCM tag, but the chunk
+   `Vec` was allocated full, forcing a realloc+copy. → reserve `TAG_LEN` up front.
+2. **glibc allocator contention** — 4 threads `malloc`/`mmap`-ing multi-MiB buffers serialise
+   on the arena lock / `mmap_sem`. → **mimalloc** global allocator (per-thread heaps).
+
+Result: parallel incompressible **1.05 → 2.32 GiB/s** (now beats sequential *and* ptopnas).
+
 ## Takeaways
-- **aws-lc-rs + in-place + deterministic nonce + zero-copy erasure** are kept — each is a
-  measured win and none weakens the security model.
-- On **compressible** data the pipeline is CPU-bound → data-parallelism scales (**2.5×**).
-- On **incompressible** data the pipeline is **memory-bandwidth-bound** (RS streams the full
-  chunk); naive per-chunk parallelism saturates RAM and can be *slower* than sequential on a
-  4-core box. Next steps: bound the worker count, cut RS memory traffic, or pipeline the
-  stages (encrypt while the next reads) rather than fan out per chunk. Expected to scale
-  further on server CPUs with more cores / memory channels.
+- **aws-lc-rs + in-place + deterministic nonce + zero-copy erasure + reserved tag + mimalloc**
+  are kept — each is a measured win and none weakens the security model.
+- Parallelism now helps on **both** inputs: **1.3×** over ptopnas on incompressible, **1.8×** on
+  compressible. The incompressible path is near the RS memory-bandwidth ceiling on this 4-core
+  box and should scale further on server CPUs with more cores / memory channels.
 
 ## Reproduce
 ```bash

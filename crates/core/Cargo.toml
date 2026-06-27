@@ -21,6 +21,8 @@ hex = { workspace = true }
 criterion = { version = "0.5", features = ["html_reports"] }
 # RustCrypto AES-GCM kept ONLY as a baseline to contrast against aws-lc-rs in benches.
 aes-gcm = "0.10"
+# Per-thread-heap allocator — removes glibc arena/mmap contention under rayon.
+mimalloc = "0.1"
 
 [[bench]]
 name = "pipeline"

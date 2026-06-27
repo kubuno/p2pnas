@@ -64,9 +64,12 @@ pub fn process(
         .enumerate()
         .map(|(index, chunk)| {
             let plaintext_len = chunk.len();
+            // Own the chunk with room for the GCM tag already reserved, so the
+            // in-place seal never reallocates the (4 MiB) buffer.
+            let mut owned = Vec::with_capacity(chunk.len() + crate::crypto::TAG_LEN);
+            owned.extend_from_slice(chunk);
             // 1. compress only if the entropy probe says it's worth it
-            let (mut buf, is_compressed) =
-                maybe_compress(chunk.to_vec(), cfg.entropy_skip, cfg.zstd_level);
+            let (mut buf, is_compressed) = maybe_compress(owned, cfg.entropy_skip, cfg.zstd_level);
             // 2. encrypt in place under a deterministic per-chunk nonce
             let nonce = sealer.seal(&mut buf, index as u64)?;
             // 3. erasure: data shards stay as slices of `buf`, only parity is allocated

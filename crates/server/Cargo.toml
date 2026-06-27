@@ -13,6 +13,10 @@ path = "src/main.rs"
 [dependencies]
 p2pnas-core = { path = "../core" }
 
+# Per-thread-heap allocator — avoids glibc arena/mmap contention when the
+# data-parallel pipeline (rayon) allocates chunk buffers across cores.
+mimalloc = "0.1"
+
 # Kubuno module runtime (mirrors the calendar pilot's stack).
 tokio              = { version = "1",    features = ["full"] }
 axum               = { version = "0.7",  features = ["macros"] }
