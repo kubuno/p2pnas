@@ -1,6 +1,11 @@
 [workspace]
-members = ["crates/core"]
+members = ["crates/core", "crates/server"]
 resolver = "2"
+
+# Build the shared core crate offline against a sibling checkout of kubuno/core
+# (in production this resolves from the git tag declared in crates/server).
+[patch."https://github.com/kubuno/core"]
+kubuno-seccomp = { path = "../core/crates/kubuno-seccomp" }
 
 [workspace.package]
 version = "0.1.0"

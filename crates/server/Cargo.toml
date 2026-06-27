@@ -1,0 +1,37 @@
+[package]
+name        = "kubuno-p2pnas"
+version     = "0.1.0-alpha"
+edition     = "2021"
+description = "Kubuno p2pnas — encrypted peer-to-peer NAS module"
+license     = "AGPL-3.0-only"
+repository  = "https://github.com/kubuno/p2pnas"
+
+[[bin]]
+name = "kubuno-p2pnas"
+path = "src/main.rs"
+
+[dependencies]
+p2pnas-core = { path = "../core" }
+
+# Kubuno module runtime (mirrors the calendar pilot's stack).
+tokio              = { version = "1",    features = ["full"] }
+axum               = { version = "0.7",  features = ["macros"] }
+tower              = { version = "0.5",  features = ["full"] }
+tower-http         = { version = "0.6",  features = ["cors", "trace"] }
+sqlx               = { version = "0.8",  features = ["runtime-tokio", "postgres", "uuid", "chrono", "json", "migrate", "tls-rustls"] }
+serde              = { version = "1",    features = ["derive"] }
+serde_json         = "1"
+reqwest            = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+config             = "0.14"
+dotenvy            = "0.15"
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3",  features = ["env-filter", "json"] }
+thiserror          = "1"
+anyhow             = "1"
+uuid               = { version = "1",    features = ["v4", "serde"] }
+chrono             = { version = "0.4",  features = ["serde"] }
+clap               = { version = "4",    features = ["derive", "env"] }
+toml               = "0.8"
+
+# Shared core crate — git tag in prod, patched to a local checkout for offline dev.
+kubuno-seccomp = { git = "https://github.com/kubuno/core", tag = "seccomp-v0.1.0", package = "kubuno-seccomp" }

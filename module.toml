@@ -1,0 +1,40 @@
+[module]
+id           = "p2pnas"
+display_name = "My Cloud"
+version      = "0.1.0"
+description  = "Stockage pair-à-pair chiffré et auto-réparant (résilience par le réseau de connaissances)"
+author       = "Kubuno Contributors"
+license      = "AGPL-3.0"
+runtime      = "rust"
+settings_path = "/p2pnas/settings"
+
+[process]
+entrypoint = "kubuno-p2pnas"
+args       = []
+
+[server]
+host = "127.0.0.1"
+port = 3119
+
+[routes]
+patterns = [
+    { method = "*", path = "/*" },
+]
+
+[[sidebar_items]]
+id       = "p2pnas"
+label    = "My Cloud"
+icon     = "Cloud"
+path     = "/p2pnas"
+position = 12
+section  = "main"
+
+[events]
+# Cleans up a user's quota row when their account is removed.
+subscribed = [
+    "UserDeleted",
+]
+# Lets the drive module react when p2pnas stores/updates a file (phase 5).
+publishes = [
+    "P2pnasFileStored",
+]
