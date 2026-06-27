@@ -1,0 +1,20 @@
+[package]
+name        = "p2pnas-store"
+version     = "0.1.0"
+edition     = "2021"
+license     = "AGPL-3.0-only"
+description = "p2pnas — node identity, SQLCipher manifest and local shard store"
+
+[dependencies]
+p2pnas-core = { path = "../core" }
+
+# Encrypted manifest (SQLCipher = AES-256 at rest), compiled with vendored OpenSSL
+# so there is no system dependency.
+rusqlite = { version = "0.31", features = ["bundled-sqlcipher-vendored-openssl"] }
+
+blake3    = "1"
+hex       = "0.4"
+rand      = "0.8"
+thiserror = "1"
+chrono    = { version = "0.4", features = ["serde"] }
+serde     = { version = "1", features = ["derive"] }

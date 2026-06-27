@@ -48,7 +48,7 @@ pub async fn set_quota(State(st): State<AppState>, Json(body): Json<SetQuota>) -
             .fetch_one(&st.db)
             .await?;
     let others: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(quota_bytes), 0) FROM p2pnas.user_quota WHERE user_id <> $1",
+        "SELECT COALESCE(SUM(quota_bytes), 0)::BIGINT FROM p2pnas.user_quota WHERE user_id <> $1",
     )
     .bind(body.user_id)
     .fetch_one(&st.db)
@@ -72,6 +72,36 @@ pub async fn set_quota(State(st): State<AppState>, Json(body): Json<SetQuota>) -
     .await?;
 
     Ok(Json(json!({ "user_id": body.user_id, "quota_bytes": body.quota_bytes })))
+}
+
+#[derive(Deserialize)]
+pub struct SetContribution {
+    pub bytes: i64,
+}
+
+/// Set the storage this node contributes to the network (admin only). Cannot drop
+/// below what is already used or already allocated to users.
+pub async fn set_contribution(State(st): State<AppState>, Json(body): Json<SetContribution>) -> Result<Json<Value>> {
+    if body.bytes < 0 {
+        return Err(P2pError::BadRequest("bytes must be ≥ 0".into()));
+    }
+    let used: i64 = sqlx::query_scalar("SELECT used_bytes FROM p2pnas.node_local WHERE id = 1")
+        .fetch_one(&st.db)
+        .await?;
+    let allocated: i64 = sqlx::query_scalar("SELECT COALESCE(SUM(quota_bytes), 0)::BIGINT FROM p2pnas.user_quota")
+        .fetch_one(&st.db)
+        .await?;
+    if body.bytes < used || body.bytes < allocated {
+        return Err(P2pError::BadRequest(format!(
+            "contribution {} below used {} or allocated {} bytes",
+            body.bytes, used, allocated
+        )));
+    }
+    sqlx::query("UPDATE p2pnas.node_local SET contributed_bytes = $1, updated_at = now() WHERE id = 1")
+        .bind(body.bytes)
+        .execute(&st.db)
+        .await?;
+    Ok(Json(json!({ "contributed_bytes": body.bytes })))
 }
 
 /// List trusted peers (admin only).

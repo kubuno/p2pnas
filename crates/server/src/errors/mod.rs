@@ -17,6 +17,8 @@ pub enum P2pError {
     BadRequest(String),
     #[error("database error")]
     Db(#[from] sqlx::Error),
+    #[error("storage error")]
+    Store(#[from] p2pnas_store::StoreError),
 }
 
 impl IntoResponse for P2pError {
@@ -29,6 +31,13 @@ impl IntoResponse for P2pError {
             P2pError::Db(e) => {
                 // Never leak SQL details to the client; log them instead.
                 tracing::error!(error = %e, "database error");
+                (StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_string())
+            }
+            P2pError::Store(p2pnas_store::StoreError::NotFound) => {
+                (StatusCode::NOT_FOUND, "not found".to_string())
+            }
+            P2pError::Store(e) => {
+                tracing::error!(error = %e, "storage error");
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_string())
             }
         };

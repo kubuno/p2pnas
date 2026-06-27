@@ -18,6 +18,11 @@ internal_secret = "change_me"
 # KUBUNO_DB_HOST / KUBUNO_DB_PORT / KUBUNO_DB_USER / KUBUNO_DB_PASSWORD / KUBUNO_DB_NAME.
 # Pour un démarrage hors superviseur, exporter ces variables manuellement.
 
+# ── Stockage ──────────────────────────────────────────────────────────────────
+[storage]
+# Répertoire de données du nœud : clé d'identité, manifest SQLCipher, shards.
+data_dir = "/var/lib/kubuno/modules/p2pnas"
+
 [logging]
 level  = "info"
 format = "pretty"

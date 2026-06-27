@@ -81,6 +81,17 @@ pub fn encode(cipher: &[u8]) -> Result<Vec<Vec<u8>>, CoreError> {
 /// Reconstruct the original `cipher` (length `cipher_len`) from any
 /// `DATA_SHARDS` surviving shards. `present[i]` is `Some` if shard `i` is held.
 pub fn reconstruct(present: &[Option<Vec<u8>>], cipher_len: usize) -> Result<Vec<u8>, CoreError> {
+    // Fast path (the local, no-loss case): every data shard is present, so just
+    // concatenate them and trim the padding — no RS decode needed.
+    if present.iter().take(DATA_SHARDS).all(|s| s.is_some()) {
+        let mut out = Vec::with_capacity(cipher_len);
+        for s in present.iter().take(DATA_SHARDS) {
+            out.extend_from_slice(s.as_ref().unwrap());
+        }
+        out.truncate(cipher_len);
+        return Ok(out);
+    }
+
     let original: Vec<(usize, &Vec<u8>)> = present
         .iter()
         .take(DATA_SHARDS)

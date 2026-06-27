@@ -55,8 +55,9 @@ impl DataKey {
         &self.0
     }
 
-    /// Derive the per-file subkey: HKDF-SHA256(self, file_id).
-    pub fn file_subkey(&self, file_id: &[u8]) -> FileSubkey {
+    /// Derive a raw 32-byte subkey: HKDF-SHA256(self, info). Used for the per-file
+    /// content subkey and for non-AEAD secrets (manifest SQLCipher key, peer id).
+    pub fn derive_raw(&self, info: &[u8]) -> [u8; KEY_LEN] {
         struct OkmLen;
         impl KeyType for OkmLen {
             fn len(&self) -> usize {
@@ -64,14 +65,18 @@ impl DataKey {
             }
         }
         let prk = Salt::new(HKDF_SHA256, SUBKEY_INFO).extract(&self.0);
-        let info = [file_id];
+        let info = [info];
         let okm = prk
             .expand(&info, OkmLen)
             .expect("hkdf expand (fixed-length output cannot fail)");
         let mut sk = [0u8; KEY_LEN];
-        okm.fill(&mut sk)
-            .expect("hkdf fill (length matches OkmLen)");
-        FileSubkey(sk)
+        okm.fill(&mut sk).expect("hkdf fill (length matches OkmLen)");
+        sk
+    }
+
+    /// Derive the per-file content subkey: HKDF-SHA256(self, file_id).
+    pub fn file_subkey(&self, file_id: &[u8]) -> FileSubkey {
+        FileSubkey(self.derive_raw(file_id))
     }
 }
 

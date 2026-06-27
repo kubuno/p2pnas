@@ -124,9 +124,24 @@ async fn main() -> Result<()> {
             .context("Migrations")?;
     }
 
+    // Storage layer: node identity (auto-generated key), SQLCipher manifest, shards.
+    let data_dir = std::path::PathBuf::from(&settings.storage.data_dir);
+    let identity = Arc::new(
+        p2pnas_store::NodeIdentity::load_or_create(&data_dir.join("identity"))
+            .context("Initialisation de l'identité du nœud")?,
+    );
+    let manifest = Arc::new(p2pnas_store::Manifest::new(
+        data_dir.join("manifest.db"),
+        identity.manifest_key_hex.clone(),
+    ));
+    let store = Arc::new(p2pnas_store::ChunkStore::new(data_dir.join("chunks")));
+
     let state = AppState {
         db:       pool,
         settings: Arc::new(settings.clone()),
+        identity,
+        manifest,
+        store,
     };
 
     // Register with the core (infinite retry) + heartbeat every 30s.
@@ -165,6 +180,19 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("Bind sur {addr}"))?;
     tracing::info!("Kubuno p2pnas démarré sur http://{addr}");
+
+    // Record the node's stable peer id in the control plane — in the background, so
+    // it never delays binding the port (avoids restart/bind races at startup).
+    {
+        let pool = state.db.clone();
+        let peer_id = state.identity.peer_id.clone();
+        tokio::spawn(async move {
+            let _ = sqlx::query("UPDATE p2pnas.node_local SET peer_id = $1, updated_at = now() WHERE id = 1")
+                .bind(peer_id)
+                .execute(&pool)
+                .await;
+        });
+    }
 
     axum::serve(
         listener,
