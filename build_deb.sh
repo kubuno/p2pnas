@@ -19,6 +19,10 @@ MODULE="p2pnas"
 PACKAGE="kubuno-${MODULE}"
 ARCH="$(dpkg --print-architecture)"
 VERSION="$(grep -m1 '^version' crates/server/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+# Strip any pre-release suffix for the dependency constraint: a Debian revision
+# like "1069" sorts BEFORE "alpha", so `>= 0.1.0-alpha` would reject the installed
+# `kubuno-core 0.1.0-1069`. Compare against the plain upstream version instead.
+CORE_DEP="${VERSION%%-*}"
 
 BUILD_NUM=$(( $(cat .build_number 2>/dev/null || echo 0) + 1 ))
 echo "$BUILD_NUM" > .build_number
@@ -72,7 +76,7 @@ Package: ${PACKAGE}
 Version: ${FULL_VERSION}
 Architecture: ${ARCH}
 Maintainer: Kubuno Contributors <kubuno@toiledev.com>
-Depends: ca-certificates, kubuno-core (>= ${VERSION})
+Depends: ca-certificates, kubuno-core (>= ${CORE_DEP})
 Section: web
 Priority: optional
 Homepage: https://github.com/kubuno/${MODULE}
