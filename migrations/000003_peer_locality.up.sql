@@ -4,5 +4,7 @@
 ALTER TABLE p2pnas.peers ADD COLUMN IF NOT EXISTS rtt_ms DOUBLE PRECISION;
 ALTER TABLE p2pnas.peers ADD COLUMN IF NOT EXISTS country TEXT;
 
--- This node's own last-observed public geo (country), so a move can be detected.
+-- This node's own last-observed public IP + geo (country), so a move can be
+-- detected (peers report the source IP they see, STUN-style).
+ALTER TABLE p2pnas.node_local ADD COLUMN IF NOT EXISTS public_ip TEXT;
 ALTER TABLE p2pnas.node_local ADD COLUMN IF NOT EXISTS country TEXT;

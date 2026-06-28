@@ -7,7 +7,7 @@ pub mod dht;
 pub mod protocol;
 pub mod server;
 
-pub use client::{audit_shard, handshake, has_shard, ping, ping_rtt, request};
+pub use client::{audit_shard, handshake, has_shard, ping, ping_observed, ping_rtt, request};
 pub use dht::{DhtNode, PersistNode};
 pub use protocol::{content_hash, P2pMessage};
 pub use server::{serve, ShardHandler};

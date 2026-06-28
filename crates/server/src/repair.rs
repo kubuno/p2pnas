@@ -47,10 +47,15 @@ pub async fn repair_all(st: &AppState) -> RepairReport {
     rep.peers_total = peers.len();
 
     let mut reachable: HashMap<String, String> = HashMap::new();
+    let mut observed: HashMap<String, usize> = HashMap::new(); // public IP → vote count
     for (pid, addr) in &peers {
-        // Measure round-trip latency while probing liveness (feeds the rtt EWMA
-        // used by latency-aware placement).
-        let rtt = p2pnas_p2p::ping_rtt(addr, &st.identity.peer_id, st.settings.server.port).await.ok();
+        // Probe liveness, measure RTT (feeds the latency EWMA), and learn the
+        // public IP this peer saw us at (STUN-style self-IP discovery).
+        let probe = p2pnas_p2p::ping_observed(addr, &st.identity.peer_id, st.settings.server.port).await.ok();
+        let rtt = probe.as_ref().map(|(r, _)| *r);
+        if let Some((_, Some(ip))) = &probe {
+            *observed.entry(ip.clone()).or_default() += 1;
+        }
         let just_down = record_peer_health(st, pid, rtt).await;
         if just_down {
             tracing::warn!(peer_id = %pid, "peer marked down after repeated failures");
@@ -64,6 +69,7 @@ pub async fn repair_all(st: &AppState) -> RepairReport {
         }
     }
     rep.peers_reachable = reachable.len();
+    detect_self_ip_change(st, observed).await;
 
     // 2. Every file across all users.
     let man = st.manifest.clone();
@@ -294,6 +300,33 @@ async fn record_peer_health(st: &AppState, peer_id: &str, rtt: Option<f64>) -> b
     .ok()
     .flatten();
     matches!(row, Some((f, s)) if s == "down" && f == DOWN_THRESHOLD)
+}
+
+/// Compare the consensus public IP (majority of what peers observed) to the last
+/// known one. On a change, record it, emit an `ip_changed` event, and enqueue a
+/// locality rebalance so data can be re-homed nearer the node's new location.
+async fn detect_self_ip_change(st: &AppState, observed: HashMap<String, usize>) {
+    let Some((ip, _)) = observed.into_iter().max_by_key(|(_, n)| *n) else { return };
+    let prev: Option<String> = sqlx::query_scalar("SELECT public_ip FROM p2pnas.node_local WHERE id = 1")
+        .fetch_one(&st.db)
+        .await
+        .ok()
+        .flatten();
+    if prev.as_deref() == Some(ip.as_str()) {
+        return; // unchanged
+    }
+    let _ = sqlx::query("UPDATE p2pnas.node_local SET public_ip = $1, updated_at = now() WHERE id = 1")
+        .bind(&ip)
+        .execute(&st.db)
+        .await;
+    if let Some(old) = prev {
+        tracing::info!(old = %old, new = %ip, "public IP changed — enqueueing locality rebalance");
+        let _ = sqlx::query("INSERT INTO p2pnas.events (kind, payload) VALUES ('ip_changed', $1)")
+            .bind(json!({ "old": old, "new": ip }))
+            .execute(&st.db)
+            .await;
+        crate::jobs::enqueue(&st.db, "rebalance_locality", json!({ "reason": "ip_changed" })).await;
+    }
 }
 
 /// Log a data-loss-risk event for a chunk that can no longer be reconstructed.

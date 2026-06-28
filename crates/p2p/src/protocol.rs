@@ -12,9 +12,11 @@ pub const MAX_MESSAGE_BYTES: u32 = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum P2pMessage {
-    /// Liveness + identity handshake.
+    /// Liveness + identity handshake. The Pong echoes the source IP the responder
+    /// saw (`observed_addr`), giving the pinger a STUN-style view of its own public
+    /// IP without any external service.
     Ping { peer_id: String, api_port: u16 },
-    Pong { peer_id: String, api_port: u16 },
+    Pong { peer_id: String, api_port: u16, observed_addr: Option<String> },
 
     /// Ask the remote to host `data` (a shard owned by `owner_peer_id`).
     StoreShard { fragment_id: String, owner_peer_id: String, data: Vec<u8> },

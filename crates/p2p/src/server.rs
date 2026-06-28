@@ -43,7 +43,7 @@ pub async fn serve(listener: TcpListener, handler: Arc<dyn ShardHandler>) {
                 let _ = stream.set_nodelay(true);
                 let h = handler.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_conn(stream, h).await {
+                    if let Err(e) = handle_conn(stream, h, addr.ip()).await {
                         tracing::debug!(peer = %addr, error = %e, "p2p connection ended");
                     }
                 });
@@ -53,7 +53,11 @@ pub async fn serve(listener: TcpListener, handler: Arc<dyn ShardHandler>) {
     }
 }
 
-async fn handle_conn(mut stream: TcpStream, handler: Arc<dyn ShardHandler>) -> std::io::Result<()> {
+async fn handle_conn(
+    mut stream: TcpStream,
+    handler: Arc<dyn ShardHandler>,
+    peer_ip: std::net::IpAddr,
+) -> std::io::Result<()> {
     // Several request/response pairs may share one connection until it closes.
     loop {
         let msg = match read_message(&mut stream).await {
@@ -62,7 +66,11 @@ async fn handle_conn(mut stream: TcpStream, handler: Arc<dyn ShardHandler>) -> s
             Err(e) => return Err(e),
         };
         let resp = match msg {
-            P2pMessage::Ping { .. } => P2pMessage::Pong { peer_id: handler.peer_id(), api_port: handler.api_port() },
+            P2pMessage::Ping { .. } => P2pMessage::Pong {
+                peer_id: handler.peer_id(),
+                api_port: handler.api_port(),
+                observed_addr: Some(peer_ip.to_string()),
+            },
             P2pMessage::StoreShard { fragment_id, owner_peer_id, data } => {
                 if handler.store(&fragment_id, &owner_peer_id, data).await {
                     P2pMessage::Ack { fragment_id }

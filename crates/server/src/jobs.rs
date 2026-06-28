@@ -55,10 +55,14 @@ pub async fn worker(st: AppState) {
         match claim(&st.db).await {
             Some((id, kind, _payload)) => {
                 let ok = match kind.as_str() {
-                    "repair" => {
+                    // `rebalance_locality` will get a dedicated re-homing pass; for
+                    // now it runs the same self-healing pass, which already places
+                    // newly-replicated shards latency-aware.
+                    "repair" | "rebalance_locality" => {
                         let r = repair::repair_all(&st).await;
                         if r.shards_replaced > 0 || r.chunks_unrepairable > 0 {
                             tracing::info!(
+                                kind = %kind,
                                 replaced = r.shards_replaced,
                                 unrepairable = r.chunks_unrepairable,
                                 "repair job complete"

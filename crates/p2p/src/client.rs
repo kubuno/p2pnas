@@ -58,7 +58,19 @@ pub async fn ping_rtt(addr: &str, my_peer_id: &str, my_api_port: u16) -> std::io
 pub async fn handshake(addr: &str, my_peer_id: &str, my_api_port: u16) -> std::io::Result<(String, u16)> {
     let resp = request(addr, &P2pMessage::Ping { peer_id: my_peer_id.to_string(), api_port: my_api_port }).await?;
     match resp {
-        P2pMessage::Pong { peer_id, api_port } => Ok((peer_id, api_port)),
+        P2pMessage::Pong { peer_id, api_port, .. } => Ok((peer_id, api_port)),
+        other => Err(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("expected Pong, got {other:?}"))),
+    }
+}
+
+/// Ping a peer and return (rtt_ms, the public IP the peer saw us at). Used to
+/// discover our own public IP STUN-style and detect a location change.
+pub async fn ping_observed(addr: &str, my_peer_id: &str, my_api_port: u16) -> std::io::Result<(f64, Option<String>)> {
+    let start = std::time::Instant::now();
+    let resp = request(addr, &P2pMessage::Ping { peer_id: my_peer_id.to_string(), api_port: my_api_port }).await?;
+    let rtt = start.elapsed().as_secs_f64() * 1000.0;
+    match resp {
+        P2pMessage::Pong { observed_addr, .. } => Ok((rtt, observed_addr)),
         other => Err(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("expected Pong, got {other:?}"))),
     }
 }
