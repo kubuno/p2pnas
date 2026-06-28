@@ -77,6 +77,14 @@ export default function P2pnasSettingsPage() {
     }
   }
 
+  // Auto-load the peers map inside the block once maps + peer data are ready.
+  useEffect(() => {
+    if (geoAvailable && MapsMiniMap && peerMap === null && !mapBusy && (peers.length > 0 || !!metrics)) {
+      void showPeerMap()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [geoAvailable, peers.length, metrics])
+
   async function load() {
     const s = await p2pnasApi.status()
     setStatus(s)
