@@ -36,6 +36,8 @@ export interface PeerRow {
   reliability_score: number
   contributed_bytes: number
   last_seen: string | null
+  rtt_ms: number | null
+  country: string | null
 }
 
 export interface RepairReport {

@@ -46,6 +46,14 @@ pub async fn ping(addr: &str, my_peer_id: &str, my_api_port: u16) -> std::io::Re
     handshake(addr, my_peer_id, my_api_port).await.map(|_| ())
 }
 
+/// Liveness + latency probe: returns the Ping→Pong round-trip time in
+/// milliseconds (used to score peers for latency-aware placement).
+pub async fn ping_rtt(addr: &str, my_peer_id: &str, my_api_port: u16) -> std::io::Result<f64> {
+    let start = std::time::Instant::now();
+    handshake(addr, my_peer_id, my_api_port).await?;
+    Ok(start.elapsed().as_secs_f64() * 1000.0)
+}
+
 /// Handshake: Ping a peer and return its (peer_id, api_port) from the Pong.
 pub async fn handshake(addr: &str, my_peer_id: &str, my_api_port: u16) -> std::io::Result<(String, u16)> {
     let resp = request(addr, &P2pMessage::Ping { peer_id: my_peer_id.to_string(), api_port: my_api_port }).await?;

@@ -48,8 +48,10 @@ pub async fn repair_all(st: &AppState) -> RepairReport {
 
     let mut reachable: HashMap<String, String> = HashMap::new();
     for (pid, addr) in &peers {
-        let alive = p2pnas_p2p::ping(addr, &st.identity.peer_id, st.settings.server.port).await.is_ok();
-        let just_down = record_peer_health(st, pid, alive).await;
+        // Measure round-trip latency while probing liveness (feeds the rtt EWMA
+        // used by latency-aware placement).
+        let rtt = p2pnas_p2p::ping_rtt(addr, &st.identity.peer_id, st.settings.server.port).await.ok();
+        let just_down = record_peer_health(st, pid, rtt).await;
         if just_down {
             tracing::warn!(peer_id = %pid, "peer marked down after repeated failures");
             let _ = sqlx::query("INSERT INTO p2pnas.events (kind, payload) VALUES ('peer_down', $1)")
@@ -57,7 +59,7 @@ pub async fn repair_all(st: &AppState) -> RepairReport {
                 .execute(&st.db)
                 .await;
         }
-        if alive {
+        if rtt.is_some() {
             reachable.insert(pid.clone(), addr.clone());
         }
     }
@@ -256,18 +258,21 @@ async fn place_shard(st: &AppState, reachable: &HashMap<String, String>, target:
 /// new placements until it answers again).
 const DOWN_THRESHOLD: i32 = 5;
 
-/// Update a peer's reliability after a liveness probe (EWMA toward 100 or 0) and
-/// its consecutive-failure / status flag. Returns true if the peer just went
-/// from active → down (so the caller can schedule a repair).
-async fn record_peer_health(st: &AppState, peer_id: &str, alive: bool) -> bool {
-    if alive {
+/// Update a peer's reliability after a liveness probe (EWMA toward 100 or 0), its
+/// measured round-trip latency (EWMA, ms), and its consecutive-failure / status
+/// flag. `rtt` is Some(ms) when the peer answered, None when it didn't. Returns
+/// true if the peer just went from active → down (so the caller can repair).
+async fn record_peer_health(st: &AppState, peer_id: &str, rtt: Option<f64>) -> bool {
+    if let Some(rtt_ms) = rtt {
         let _ = sqlx::query(
             "UPDATE p2pnas.peers
              SET reliability_score = LEAST(100.0, reliability_score * 0.8 + 20.0),
+                 rtt_ms = CASE WHEN rtt_ms IS NULL THEN $2 ELSE rtt_ms * 0.7 + $2 * 0.3 END,
                  consecutive_failures = 0, status = 'active', last_seen = now()
              WHERE peer_id = $1",
         )
         .bind(peer_id)
+        .bind(rtt_ms)
         .execute(&st.db)
         .await;
         return false;

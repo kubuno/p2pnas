@@ -212,9 +212,9 @@ pub async fn remove_peer(
 
 /// List trusted peers (admin only).
 pub async fn list_peers(State(st): State<AppState>) -> Result<Json<Value>> {
-    type Row = (String, String, f64, i64, Option<chrono::DateTime<chrono::Utc>>);
+    type Row = (String, String, f64, i64, Option<chrono::DateTime<chrono::Utc>>, Option<f64>, Option<String>);
     let rows: Vec<Row> = sqlx::query_as(
-        "SELECT peer_id, addr, reliability_score, contributed_bytes, last_seen
+        "SELECT peer_id, addr, reliability_score, contributed_bytes, last_seen, rtt_ms, country
          FROM p2pnas.peers ORDER BY reliability_score DESC, peer_id",
     )
     .fetch_all(&st.db)
@@ -222,13 +222,15 @@ pub async fn list_peers(State(st): State<AppState>) -> Result<Json<Value>> {
 
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(peer_id, addr, score, contributed, last_seen)| {
+        .map(|(peer_id, addr, score, contributed, last_seen, rtt_ms, country)| {
             json!({
                 "peer_id": peer_id,
                 "addr": addr,
                 "reliability_score": score,
                 "contributed_bytes": contributed,
                 "last_seen": last_seen.map(|t| t.to_rfc3339()),
+                "rtt_ms": rtt_ms,
+                "country": country,
             })
         })
         .collect();

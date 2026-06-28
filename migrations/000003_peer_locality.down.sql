@@ -1,0 +1,3 @@
+ALTER TABLE p2pnas.node_local DROP COLUMN IF EXISTS country;
+ALTER TABLE p2pnas.peers DROP COLUMN IF EXISTS country;
+ALTER TABLE p2pnas.peers DROP COLUMN IF EXISTS rtt_ms;

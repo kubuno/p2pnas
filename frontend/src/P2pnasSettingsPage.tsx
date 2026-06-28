@@ -264,6 +264,7 @@ export default function P2pnasSettingsPage() {
                 <thead><tr className="text-left text-xs text-text-tertiary border-b border-border">
                   <th className="py-1.5 font-medium">Pair</th><th className="py-1.5 font-medium">Adresse</th>
                   <th className="py-1.5 font-medium">État</th>
+                  <th className="py-1.5 font-medium">Latence</th>
                   <th className="py-1.5 font-medium">Fiabilité</th><th className="py-1.5 font-medium">Vu</th>
                   <th className="py-1.5 font-medium"></th>
                 </tr></thead>
@@ -279,6 +280,7 @@ export default function P2pnasSettingsPage() {
                             ? <span className="inline-flex items-center gap-1 text-green-600"><Wifi className="w-3.5 h-3.5" /> en ligne</span>
                             : <span className="inline-flex items-center gap-1 text-text-tertiary"><WifiOff className="w-3.5 h-3.5" /> hors ligne</span>}
                         </td>
+                        <td className="py-1.5 text-xs">{p.rtt_ms != null ? <LatencyBadge ms={p.rtt_ms} /> : <span className="text-text-tertiary">—</span>}</td>
                         <td className="py-1.5"><ReliabilityBadge score={p.reliability_score} /></td>
                         <td className="py-1.5 text-text-tertiary text-xs">{timeAgo(p.last_seen)}</td>
                         <td className="py-1.5 text-right">
@@ -405,6 +407,11 @@ function HealthBadge({ h }: { h: FileHealth }) {
     return <span className="inline-flex items-center gap-1 text-amber-600 text-xs font-medium"><ShieldAlert className="w-3.5 h-3.5" /> Récupérable ({h.min_reachable}/{h.total_shards})</span>
   }
   return <span className="inline-flex items-center gap-1 text-green-600 text-xs font-medium"><CheckCircle2 className="w-3.5 h-3.5" /> Sûr ({h.min_reachable}/{h.total_shards})</span>
+}
+
+function LatencyBadge({ ms }: { ms: number }) {
+  const color = ms < 50 ? 'text-green-600' : ms < 150 ? 'text-amber-600' : 'text-red-600'
+  return <span className={`font-medium ${color}`}>{Math.round(ms)} ms</span>
 }
 
 function ReliabilityBadge({ score }: { score: number }) {
