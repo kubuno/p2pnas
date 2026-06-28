@@ -30,6 +30,16 @@ data_dir = "/var/lib/kubuno/modules/p2pnas"
 host = "0.0.0.0"
 port = 7474
 
+# ── Découverte de pairs ───────────────────────────────────────────────────────
+[discovery]
+# mDNS : découverte automatique des nœuds p2pnas sur le réseau local (zéro-config).
+mdns = true
+# DHT Kademlia : découverte à grande échelle (Internet). Nécessite des nœuds
+# d'amorçage (bootstrap) pour rejoindre l'overlay. Ouvrir dht_port en UDP.
+dht = false
+dht_port = 7475
+# dht_bootstrap = ["203.0.113.5:7475", "198.51.100.9:7475"]
+
 [logging]
 level  = "info"
 format = "pretty"

@@ -2,6 +2,7 @@
 //! The transports (mDNS on the LAN, the Kademlia DHT for wide-area) all funnel
 //! through [`register_peer`], which handshakes the address and upserts it.
 
+pub mod dht;
 pub mod mdns;
 
 use sqlx::PgPool;
