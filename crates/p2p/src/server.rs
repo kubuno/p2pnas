@@ -20,6 +20,11 @@ pub trait ShardHandler: Send + Sync {
     async fn get(&self, fragment_id: &str) -> Option<Vec<u8>>;
     /// Drop a hosted shard.
     async fn delete(&self, fragment_id: &str, owner_peer_id: &str) -> bool;
+    /// Cheap existence check (no payload). Default: derived from `get`, but hosts
+    /// should override with a metadata-only lookup.
+    async fn has(&self, fragment_id: &str) -> bool {
+        self.get(fragment_id).await.is_some()
+    }
 }
 
 /// Accept loop. Run as a background task for the lifetime of the node.
@@ -60,6 +65,10 @@ async fn handle_conn(mut stream: TcpStream, handler: Arc<dyn ShardHandler>) -> s
                 Some(data) => P2pMessage::ShardData { fragment_id, data },
                 None => P2pMessage::ShardNotFound { fragment_id },
             },
+            P2pMessage::HasShard { fragment_id } => {
+                let present = handler.has(&fragment_id).await;
+                P2pMessage::HasShardResult { fragment_id, present }
+            }
             P2pMessage::DeleteShard { fragment_id, owner_peer_id } => {
                 handler.delete(&fragment_id, &owner_peer_id).await;
                 P2pMessage::Ack { fragment_id }

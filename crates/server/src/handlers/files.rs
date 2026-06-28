@@ -81,14 +81,35 @@ pub async fn upload(
 /// Move each shard to a peer (round-robin over `[self] + peers`); shards that
 /// can't be placed remotely stay local. No peers → everything stays local.
 async fn distribute_shards(st: &AppState, user_id: &str, file_id: &str) {
-    let peers: Vec<(String, String)> =
+    let all_peers: Vec<(String, String)> =
         sqlx::query_as("SELECT peer_id, addr FROM p2pnas.peers WHERE peer_id <> $1")
             .bind(&st.identity.peer_id)
             .fetch_all(&st.db)
             .await
             .unwrap_or_default();
+
+    // Only spread onto peers that answer a liveness probe right now — placing a
+    // shard on a dead peer would just lose it.
+    let mut peers: Vec<(String, String)> = Vec::new();
+    for (pid, addr) in all_peers {
+        if p2pnas_p2p::ping(&addr, &st.identity.peer_id, st.settings.server.port).await.is_ok() {
+            peers.push((pid, addr));
+        }
+    }
     if peers.is_empty() {
         return;
+    }
+
+    // Durability note: with L = 1(self) + peers locations, round-robin gives each
+    // ⌈14/L⌉ shards; single-failure survival needs ⌈14/L⌉ ≤ PARITY_SHARDS.
+    let locations = peers.len() + 1;
+    let max_per_loc = TOTAL_SHARDS.div_ceil(locations);
+    if max_per_loc > p2pnas_core::erasure::PARITY_SHARDS {
+        tracing::warn!(
+            locations, max_per_loc,
+            "low durability: too few peers to survive a single failure (need ≥ {} locations)",
+            crate::repair::min_locations_for_durability()
+        );
     }
 
     let (man, uid, fid) = (st.manifest.clone(), user_id.to_string(), file_id.to_string());

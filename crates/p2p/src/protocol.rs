@@ -25,6 +25,11 @@ pub enum P2pMessage {
     ShardData { fragment_id: String, data: Vec<u8> },
     ShardNotFound { fragment_id: String },
 
+    /// Cheap existence probe (no payload transfer) — used by the scrubber/repair
+    /// pass to check a shard is still held without pulling its bytes.
+    HasShard { fragment_id: String },
+    HasShardResult { fragment_id: String, present: bool },
+
     /// Drop a shard the owner no longer needs.
     DeleteShard { fragment_id: String, owner_peer_id: String },
 

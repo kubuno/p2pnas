@@ -1,11 +1,11 @@
 # ─── Kubuno p2pnas — Configuration ──────────────────────────────────────────────
 # Copiez ce fichier en config.toml et adaptez les valeurs.
 # Les variables d'environnement préfixées KP__ surchargent ce fichier.
-# Exemple : KP__SERVER__PORT=3119
+# Exemple : KP__SERVER__PORT=3123
 
 [server]
 host = "127.0.0.1"
-port = 3119
+port = 3123
 
 [core]
 # URL du core Kubuno (pour l'enregistrement du module)

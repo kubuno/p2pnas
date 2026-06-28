@@ -21,6 +21,8 @@ pub fn build(state: AppState) -> Router {
         .route("/admin/quotas", get(admin::list_quotas).post(admin::set_quota))
         .route("/admin/contribution", post(admin::set_contribution))
         .route("/admin/peers", get(admin::list_peers).post(admin::add_peer))
+        .route("/admin/peers/:peer_id", axum::routing::delete(admin::remove_peer))
+        .route("/admin/repair", post(admin::run_repair))
         .route_layer(middleware::from_fn(require_admin));
 
     // Authenticated routes (the core proxy injects the user headers).

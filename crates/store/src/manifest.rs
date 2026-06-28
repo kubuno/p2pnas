@@ -148,6 +148,18 @@ pub fn list_files(conn: &Connection, user_id: &str) -> Result<Vec<FileRow>> {
     Ok(rows)
 }
 
+/// Every file across all users (for the node-wide repair/scrub pass).
+pub fn list_all_files(conn: &Connection) -> Result<Vec<FileRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT file_id, user_id, path, size, stored_bytes, chunk_count, created_at
+         FROM files ORDER BY user_id, path",
+    )?;
+    let rows = stmt
+        .query_map([], map_file)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
 pub fn get_file(conn: &Connection, user_id: &str, file_id: &str) -> Result<Option<FileRow>> {
     let mut stmt = conn.prepare(
         "SELECT file_id, user_id, path, size, stored_bytes, chunk_count, created_at

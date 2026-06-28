@@ -24,6 +24,9 @@ impl ShardHandler for FileHost {
     async fn get(&self, fragment_id: &str) -> Option<Vec<u8>> {
         std::fs::read(self.dir.join(fragment_id)).ok()
     }
+    async fn has(&self, fragment_id: &str) -> bool {
+        self.dir.join(fragment_id).exists()
+    }
     async fn delete(&self, fragment_id: &str, _owner: &str) -> bool {
         std::fs::remove_file(self.dir.join(fragment_id)).is_ok()
     }

@@ -213,6 +213,30 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Periodic self-healing: probe peer liveness (refreshing reliability scores)
+    // and re-replicate any shard whose host has gone unreachable. Admin can also
+    // trigger a pass on demand via POST /admin/repair.
+    {
+        let st = state.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(600));
+            tick.tick().await; // consume the immediate first tick
+            loop {
+                tick.tick().await;
+                let r = kubuno_p2pnas::repair::repair_all(&st).await;
+                if r.shards_replaced > 0 || r.chunks_unrepairable > 0 {
+                    tracing::info!(
+                        files = r.files_scanned,
+                        repaired = r.chunks_repaired,
+                        replaced = r.shards_replaced,
+                        unrepairable = r.chunks_unrepairable,
+                        "repair pass complete"
+                    );
+                }
+            }
+        });
+    }
+
     axum::serve(
         listener,
         router::build(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),

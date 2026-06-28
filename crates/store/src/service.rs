@@ -183,6 +183,27 @@ pub fn reassemble(
     Ok(out)
 }
 
+/// Every file across all users (node-wide repair/scrub).
+pub fn list_all(manifest: &Manifest) -> Result<Vec<FileRow>> {
+    let conn = manifest.connect()?;
+    manifest::list_all_files(&conn)
+}
+
+/// Rebuild every shard of a chunk from the surviving ones. `present[i]` holds
+/// shard `i`'s bytes (or None if it must be regenerated); RS needs ≥ DATA_SHARDS.
+/// Returns the 14 shard byte-vectors in index order, byte-identical to the
+/// originals (RS + padding are deterministic) — the repair path re-places only
+/// the ones that were lost.
+pub fn regen_chunk_shards(present: &[Option<Vec<u8>>], cipher_len: usize) -> Result<Vec<Vec<u8>>> {
+    let cipher = erasure::reconstruct(present, cipher_len)?;
+    Ok(erasure::encode(&cipher)?)
+}
+
+/// Write a shard into this node's local store.
+pub fn write_local(store: &ChunkStore, fragment_id: &str, bytes: &[u8]) -> Result<()> {
+    store.write(fragment_id, bytes)
+}
+
 /// Record a shard's new home ('local' or a peer_id) after distribution.
 pub fn set_location(manifest: &Manifest, fragment_id: &str, location: &str) -> Result<()> {
     let conn = manifest.connect()?;

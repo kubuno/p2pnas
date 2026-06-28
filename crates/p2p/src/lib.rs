@@ -6,7 +6,7 @@ pub mod client;
 pub mod protocol;
 pub mod server;
 
-pub use client::{handshake, request};
+pub use client::{handshake, has_shard, ping, request};
 pub use protocol::P2pMessage;
 pub use server::{serve, ShardHandler};
 
@@ -62,6 +62,10 @@ mod tests {
         // Fetch it back.
         let got = request(&addr, &P2pMessage::GetShard { fragment_id: "frag-1".into() }).await.unwrap();
         assert_eq!(got, P2pMessage::ShardData { fragment_id: "frag-1".into(), data: vec![9, 8, 7, 6] });
+
+        // Existence probe: present vs absent.
+        assert!(has_shard(&addr, "frag-1").await.unwrap());
+        assert!(!has_shard(&addr, "nope").await.unwrap());
 
         // Missing shard.
         let miss = request(&addr, &P2pMessage::GetShard { fragment_id: "nope".into() }).await.unwrap();

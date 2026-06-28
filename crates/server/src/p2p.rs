@@ -50,6 +50,10 @@ impl ShardHandler for P2pShardHandler {
         self.store.read(fragment_id).ok()
     }
 
+    async fn has(&self, fragment_id: &str) -> bool {
+        self.store.exists(fragment_id)
+    }
+
     async fn delete(&self, fragment_id: &str, _owner_peer_id: &str) -> bool {
         let _ = self.store.delete(fragment_id);
         let _ = sqlx::query("DELETE FROM p2pnas.hosted_shards WHERE fragment_id = $1")

@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::{
     errors::{P2pError, Result},
+    repair,
     state::AppState,
 };
 
@@ -130,6 +131,29 @@ pub async fn add_peer(State(st): State<AppState>, Json(body): Json<AddPeer>) -> 
     .await?;
 
     Ok(Json(json!({ "peer_id": peer_id, "addr": addr, "api_port": api_port })))
+}
+
+/// Trigger a node-wide self-healing repair pass (admin only): probe peer
+/// liveness, then re-replicate any shard whose host has gone unreachable.
+pub async fn run_repair(State(st): State<AppState>) -> Result<Json<Value>> {
+    let report = repair::repair_all(&st).await;
+    let report = serde_json::to_value(&report).unwrap_or_default();
+    Ok(Json(json!({ "repair": report })))
+}
+
+/// Forget a peer (admin only). Shards currently hosted there stay referenced in
+/// the manifest until a repair pass relocates them; removing an unreachable peer
+/// lets the next pass treat its shards as lost and re-replicate them.
+pub async fn remove_peer(
+    State(st): State<AppState>,
+    axum::extract::Path(peer_id): axum::extract::Path<String>,
+) -> Result<Json<Value>> {
+    let n = sqlx::query("DELETE FROM p2pnas.peers WHERE peer_id = $1")
+        .bind(&peer_id)
+        .execute(&st.db)
+        .await?
+        .rows_affected();
+    Ok(Json(json!({ "removed": peer_id, "found": n > 0 })))
 }
 
 /// List trusted peers (admin only).

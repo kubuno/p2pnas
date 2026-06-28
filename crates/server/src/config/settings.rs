@@ -92,7 +92,7 @@ impl Settings {
     pub fn load() -> Result<Self, ConfigError> {
         let mut builder = Config::builder()
             .set_default("server.host", "127.0.0.1")?
-            .set_default("server.port", 3119i64)?
+            .set_default("server.port", 3123i64)?
             .set_default("core.url", "http://127.0.0.1:8080")?
             .set_default("core.internal_secret", "")?
             .set_default("database.max_connections", 10i64)?
