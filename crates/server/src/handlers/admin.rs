@@ -141,10 +141,11 @@ pub async fn run_repair(State(st): State<AppState>) -> Result<Json<Value>> {
     Ok(Json(json!({ "repair": report })))
 }
 
-/// Enqueue a repair/rebalance job (admin only) — non-blocking; the worker runs it.
+/// Enqueue a locality rebalance (admin only) — heals losses, then re-homes shards
+/// toward the latency-optimal layout. Non-blocking; the worker runs it.
 pub async fn rebalance(State(st): State<AppState>) -> Result<Json<Value>> {
-    crate::jobs::enqueue(&st.db, "repair", json!({})).await;
-    Ok(Json(json!({ "enqueued": "repair" })))
+    crate::jobs::enqueue(&st.db, "rebalance_locality", json!({ "reason": "manual" })).await;
+    Ok(Json(json!({ "enqueued": "rebalance_locality" })))
 }
 
 /// Node metrics (admin only): storage, peers, jobs, discovery, data-loss risk.

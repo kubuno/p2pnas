@@ -228,7 +228,7 @@ async fn shard_reachable(st: &AppState, reachable: &HashMap<String, String>, s: 
 }
 
 /// Fetch a shard's bytes (local read or P2P GetShard).
-async fn fetch_shard(st: &AppState, reachable: &HashMap<String, String>, s: &ShardRow) -> Option<Vec<u8>> {
+pub(crate) async fn fetch_shard(st: &AppState, reachable: &HashMap<String, String>, s: &ShardRow) -> Option<Vec<u8>> {
     if s.location == "local" {
         let (store, frag) = (st.store.clone(), s.fragment_id.clone());
         tokio::task::spawn_blocking(move || p2pnas_store::service::read_local(&store, &frag)).await.ok().flatten()
@@ -242,8 +242,23 @@ async fn fetch_shard(st: &AppState, reachable: &HashMap<String, String>, s: &Sha
     }
 }
 
+/// Drop a shard from a location ("local" or a reachable peer_id) after it has been
+/// re-placed elsewhere (used by the locality rebalance to free the old copy).
+pub(crate) async fn drop_shard(st: &AppState, reachable: &HashMap<String, String>, location: &str, frag: &str) {
+    if location == "local" {
+        let (store, f) = (st.store.clone(), frag.to_string());
+        let _ = tokio::task::spawn_blocking(move || store.delete(&f)).await;
+    } else if let Some(addr) = reachable.get(location) {
+        let _ = p2pnas_p2p::request(
+            addr,
+            &P2pMessage::DeleteShard { fragment_id: frag.to_string(), owner_peer_id: st.identity.peer_id.clone() },
+        )
+        .await;
+    }
+}
+
 /// Place a shard on a target location ("local" or a reachable peer_id).
-async fn place_shard(st: &AppState, reachable: &HashMap<String, String>, target: &str, frag: &str, bytes: &[u8]) -> bool {
+pub(crate) async fn place_shard(st: &AppState, reachable: &HashMap<String, String>, target: &str, frag: &str, bytes: &[u8]) -> bool {
     if target == "local" {
         let (store, frag2, data) = (st.store.clone(), frag.to_string(), bytes.to_vec());
         return tokio::task::spawn_blocking(move || p2pnas_store::service::write_local(&store, &frag2, &data))

@@ -8,7 +8,7 @@ use std::time::Duration;
 use serde_json::Value;
 use sqlx::PgPool;
 
-use crate::{repair, state::AppState};
+use crate::{rebalance, repair, state::AppState};
 
 /// Add a job to the queue.
 pub async fn enqueue(db: &PgPool, kind: &str, payload: Value) {
@@ -55,20 +55,24 @@ pub async fn worker(st: AppState) {
         match claim(&st.db).await {
             Some((id, kind, _payload)) => {
                 let ok = match kind.as_str() {
-                    // `rebalance_locality` will get a dedicated re-homing pass; for
-                    // now it runs the same self-healing pass, which already places
-                    // newly-replicated shards latency-aware.
-                    "repair" | "rebalance_locality" => {
+                    "repair" => {
                         let r = repair::repair_all(&st).await;
                         if r.shards_replaced > 0 || r.chunks_unrepairable > 0 {
                             tracing::info!(
-                                kind = %kind,
                                 replaced = r.shards_replaced,
                                 unrepairable = r.chunks_unrepairable,
                                 "repair job complete"
                             );
                         }
-                        true // best-effort: unrepairable chunks aren't a job failure
+                        true
+                    }
+                    // Full locality maintenance: first heal any losses (so we never
+                    // move the last copy of a chunk that's already degraded), then
+                    // re-home healthy shards toward the latency-optimal layout.
+                    "rebalance_locality" => {
+                        repair::repair_all(&st).await;
+                        rebalance::rebalance_all(&st).await;
+                        true
                     }
                     other => {
                         tracing::warn!(kind = other, "unknown job kind");

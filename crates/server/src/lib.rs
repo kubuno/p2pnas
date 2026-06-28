@@ -6,6 +6,7 @@ pub mod jobs;
 pub mod middleware;
 pub mod p2p;
 pub mod placement;
+pub mod rebalance;
 pub mod repair;
 pub mod router;
 pub mod state;
