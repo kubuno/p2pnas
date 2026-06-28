@@ -32,6 +32,12 @@ pub fn build(state: AppState) -> Router {
         .route("/quota/me", get(quota::me))
         .route("/files", get(files::list).post(files::upload))
         .route("/files/:id", get(files::download).delete(files::delete))
+        // Folder-aware "My Cloud" mount (path-based, parity with Drive).
+        .route("/browse", get(files::browse))
+        .route("/download", get(files::download_path))
+        .route("/folders", post(files::mkdir))
+        .route("/rename", post(files::rename))
+        .route("/delete", post(files::delete_path))
         .merge(admin_routes)
         .route_layer(middleware::from_fn(require_auth))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD))

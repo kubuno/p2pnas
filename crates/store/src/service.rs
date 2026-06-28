@@ -184,6 +184,130 @@ pub fn reassemble(
     Ok(out)
 }
 
+// ── Folder-aware browsing (the Drive "My Cloud" mount) ───────────────────────
+
+/// A directory's immediate children: explicit + implicit subfolders, and files.
+pub struct DirListing {
+    pub folders: Vec<String>, // full paths
+    pub files:   Vec<FileRow>,
+}
+
+/// List the immediate children of directory `dir` ("" = root). Subfolders are the
+/// union of explicit (mkdir'd) folders and those implied by nested file paths.
+pub fn browse(manifest: &Manifest, user_id: &str, dir: &str) -> Result<DirListing> {
+    use std::collections::BTreeSet;
+    let conn = manifest.connect()?;
+    let dir = dir.trim_matches('/');
+
+    let mut folders: BTreeSet<String> = manifest::folders_in(&conn, user_id, dir)?.into_iter().collect();
+    let mut files = Vec::new();
+    for f in manifest::list_files(&conn, user_id)? {
+        let rel = if dir.is_empty() {
+            Some(f.path.as_str())
+        } else {
+            f.path.strip_prefix(dir).and_then(|r| r.strip_prefix('/'))
+        };
+        let Some(rel) = rel else { continue };
+        if rel.is_empty() {
+            continue;
+        }
+        match rel.split_once('/') {
+            Some((child, _)) => {
+                let fp = if dir.is_empty() { child.to_string() } else { format!("{dir}/{child}") };
+                folders.insert(fp);
+            }
+            None => files.push(f),
+        }
+    }
+    Ok(DirListing { folders: folders.into_iter().collect(), files })
+}
+
+/// Look up a file row by its path (None if absent).
+pub fn get_file_by_path(manifest: &Manifest, user_id: &str, path: &str) -> Result<Option<FileRow>> {
+    let conn = manifest.connect()?;
+    manifest::get_file_by_path(&conn, user_id, path)
+}
+
+/// Create a folder (and missing ancestors).
+pub fn mkdir(manifest: &Manifest, user_id: &str, path: &str) -> Result<()> {
+    let conn = manifest.connect()?;
+    manifest::insert_folder(&conn, user_id, path.trim_matches('/'))
+}
+
+/// Rename or move a file or folder from `from` to `to` (path change only — no
+/// re-encryption; file_ids and shards are untouched). Atomic.
+pub fn rename(manifest: &Manifest, user_id: &str, from: &str, to: &str) -> Result<()> {
+    let from = from.trim_matches('/');
+    let to = to.trim_matches('/');
+    if from.is_empty() || to.is_empty() || from == to {
+        return Err(StoreError::NotFound);
+    }
+    let mut conn = manifest.connect()?;
+    let tx = conn.transaction()?;
+
+    // Ensure the destination's parent exists.
+    manifest::insert_folder(&tx, user_id, manifest::dirname(to))?;
+
+    if let Some(file) = manifest::get_file_by_path(&tx, user_id, from)? {
+        // Single file.
+        manifest::update_file_path(&tx, user_id, &file.file_id, to)?;
+    } else {
+        // Folder subtree: rewrite every file + folder path under the prefix.
+        let files = manifest::files_under(&tx, user_id, from)?;
+        let folders = manifest::folders_under(&tx, user_id, from)?;
+        if files.is_empty() && folders.is_empty() {
+            return Err(StoreError::NotFound);
+        }
+        for (file_id, path) in files {
+            let suffix = &path[from.len()..]; // includes leading '/' (or empty if path==from)
+            manifest::update_file_path(&tx, user_id, &file_id, &format!("{to}{suffix}"))?;
+        }
+        for path in folders {
+            let suffix = &path[from.len()..];
+            manifest::update_folder_path(&tx, user_id, &path, &format!("{to}{suffix}"))?;
+        }
+        manifest::insert_folder(&tx, user_id, to)?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Delete a file or a folder subtree. Returns (plaintext_bytes, stored_bytes)
+/// freed, for quota accounting.
+pub fn delete_path(manifest: &Manifest, store: &ChunkStore, user_id: &str, path: &str) -> Result<(i64, i64)> {
+    let path = path.trim_matches('/');
+    let mut conn = manifest.connect()?;
+    let tx = conn.transaction()?;
+
+    let mut freed_size = 0i64;
+    let mut freed_stored = 0i64;
+
+    if let Some(file) = manifest::get_file_by_path(&tx, user_id, path)? {
+        freed_size += file.size;
+        freed_stored += file.stored_bytes;
+        for frag in manifest::delete_file(&tx, user_id, &file.file_id)? {
+            store.delete(&frag)?;
+        }
+    } else {
+        let files = manifest::files_under(&tx, user_id, path)?;
+        if files.is_empty() && !manifest::folder_exists(&tx, user_id, path)? {
+            return Err(StoreError::NotFound);
+        }
+        for (file_id, _) in files {
+            if let Some(f) = manifest::get_file(&tx, user_id, &file_id)? {
+                freed_size += f.size;
+                freed_stored += f.stored_bytes;
+            }
+            for frag in manifest::delete_file(&tx, user_id, &file_id)? {
+                store.delete(&frag)?;
+            }
+        }
+        manifest::delete_folder_subtree(&tx, user_id, path)?;
+    }
+    tx.commit()?;
+    Ok((freed_size, freed_stored))
+}
+
 /// Every file across all users (node-wide repair/scrub).
 pub fn list_all(manifest: &Manifest) -> Result<Vec<FileRow>> {
     let conn = manifest.connect()?;

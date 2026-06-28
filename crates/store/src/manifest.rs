@@ -43,7 +43,32 @@ CREATE TABLE IF NOT EXISTS shards (
 );
 CREATE INDEX IF NOT EXISTS chunks_file_idx ON chunks(file_id);
 CREATE INDEX IF NOT EXISTS shards_chunk_idx ON shards(chunk_id);
+-- Explicit folders (so empty / freshly-created directories persist; non-empty
+-- folders are also implied by file paths). `parent` is the dirname of `path`.
+CREATE TABLE IF NOT EXISTS folders (
+    user_id TEXT NOT NULL,
+    path    TEXT NOT NULL,
+    parent  TEXT NOT NULL,
+    PRIMARY KEY (user_id, path)
+);
+CREATE INDEX IF NOT EXISTS folders_parent_idx ON folders(user_id, parent);
 "#;
+
+/// Directory part of a "/"-separated path ("" for a top-level entry).
+pub fn dirname(path: &str) -> &str {
+    match path.rfind('/') {
+        Some(i) => &path[..i],
+        None => "",
+    }
+}
+
+/// Last segment of a "/"-separated path.
+pub fn basename(path: &str) -> &str {
+    match path.rfind('/') {
+        Some(i) => &path[i + 1..],
+        None => path,
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FileRow {
@@ -241,6 +266,111 @@ pub fn delete_file(conn: &Connection, user_id: &str, file_id: &str) -> Result<Ve
         .collect::<rusqlite::Result<Vec<_>>>()?;
     conn.execute("DELETE FROM files WHERE user_id = ?1 AND file_id = ?2", params![user_id, file_id])?;
     Ok(frags)
+}
+
+// ── Folders ──────────────────────────────────────────────────────────────────
+
+/// Create a folder and every missing ancestor (idempotent). No-op for "".
+pub fn insert_folder(conn: &Connection, user_id: &str, path: &str) -> Result<()> {
+    let path = path.trim_matches('/');
+    if path.is_empty() {
+        return Ok(());
+    }
+    // Build each ancestor prefix ("a", "a/b", "a/b/c") and insert if absent.
+    let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    let mut acc = String::new();
+    for seg in segs {
+        if !acc.is_empty() {
+            acc.push('/');
+        }
+        acc.push_str(seg);
+        let parent = dirname(&acc).to_string();
+        conn.execute(
+            "INSERT OR IGNORE INTO folders (user_id, path, parent) VALUES (?1, ?2, ?3)",
+            params![user_id, acc, parent],
+        )?;
+    }
+    Ok(())
+}
+
+/// Explicit folder paths directly under `parent`.
+pub fn folders_in(conn: &Connection, user_id: &str, parent: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT path FROM folders WHERE user_id = ?1 AND parent = ?2 ORDER BY path")?;
+    let rows = stmt
+        .query_map(params![user_id, parent], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// True if an explicit folder exists at `path`.
+pub fn folder_exists(conn: &Connection, user_id: &str, path: &str) -> Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM folders WHERE user_id = ?1 AND path = ?2",
+        params![user_id, path],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
+/// Delete a folder row (single path).
+pub fn delete_folder_row(conn: &Connection, user_id: &str, path: &str) -> Result<()> {
+    conn.execute("DELETE FROM folders WHERE user_id = ?1 AND path = ?2", params![user_id, path])?;
+    Ok(())
+}
+
+/// Delete every folder row at or under `path` (the subtree). Files are handled by
+/// the caller (which needs the fragment ids to free shards).
+pub fn delete_folder_subtree(conn: &Connection, user_id: &str, path: &str) -> Result<()> {
+    let prefix = format!("{path}/");
+    conn.execute(
+        "DELETE FROM folders WHERE user_id = ?1 AND (path = ?2 OR path LIKE ?3)",
+        params![user_id, path, format!("{prefix}%")],
+    )?;
+    Ok(())
+}
+
+/// Files at or under `path` (the file itself, or every file inside a folder).
+/// Returns (file_id, path) pairs so the caller can free shards + re-key.
+pub fn files_under(conn: &Connection, user_id: &str, path: &str) -> Result<Vec<(String, String)>> {
+    let prefix = format!("{path}/");
+    let mut stmt = conn.prepare(
+        "SELECT file_id, path FROM files WHERE user_id = ?1 AND (path = ?2 OR path LIKE ?3) ORDER BY path",
+    )?;
+    let rows = stmt
+        .query_map(params![user_id, path, format!("{prefix}%")], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// Every explicit folder row at or under `path`.
+pub fn folders_under(conn: &Connection, user_id: &str, path: &str) -> Result<Vec<String>> {
+    let prefix = format!("{path}/");
+    let mut stmt = conn.prepare(
+        "SELECT path FROM folders WHERE user_id = ?1 AND (path = ?2 OR path LIKE ?3) ORDER BY path",
+    )?;
+    let rows = stmt
+        .query_map(params![user_id, path, format!("{prefix}%")], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// Rewrite a single file's path (rename/move). Keeps file_id (and thus its
+/// subkey/shards) intact.
+pub fn update_file_path(conn: &Connection, user_id: &str, file_id: &str, new_path: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE files SET path = ?3 WHERE user_id = ?1 AND file_id = ?2",
+        params![user_id, file_id, new_path],
+    )?;
+    Ok(())
+}
+
+/// Rewrite a folder row's path + parent (used when moving/renaming a subtree).
+pub fn update_folder_path(conn: &Connection, user_id: &str, old: &str, new: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE folders SET path = ?3, parent = ?4 WHERE user_id = ?1 AND path = ?2",
+        params![user_id, old, new, dirname(new)],
+    )?;
+    Ok(())
 }
 
 fn map_file(r: &rusqlite::Row) -> rusqlite::Result<FileRow> {

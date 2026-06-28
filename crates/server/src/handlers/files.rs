@@ -22,6 +22,23 @@ pub struct PathQuery {
     pub path: String,
 }
 
+#[derive(Deserialize)]
+pub struct DirQuery {
+    /// Directory to list ("" or absent = root).
+    pub path: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct PathBody {
+    pub path: String,
+}
+
+#[derive(Deserialize)]
+pub struct RenameBody {
+    pub from: String,
+    pub to:   String,
+}
+
 fn join_err<E>(_: E) -> P2pError {
     P2pError::BadRequest("internal task error".into())
 }
@@ -160,16 +177,10 @@ pub async fn list(State(st): State<AppState>, Extension(user): Extension<P2pUser
     Ok(Json(json!({ "files": files })))
 }
 
-/// Download a file: gather its shards (local + peers), reconstruct, decrypt.
-pub async fn download(
-    State(st): State<AppState>,
-    Extension(user): Extension<P2pUser>,
-    Path(file_id): Path<String>,
-) -> Result<Response> {
-    let uid = user.id.to_string();
-
-    // 1. Read the placement plan (which shard lives where).
-    let (man, uid2, fid) = (st.manifest.clone(), uid.clone(), file_id.clone());
+/// Gather a file's shards (local + peers), reconstruct and decrypt → plaintext.
+async fn reconstruct_file(st: &AppState, uid: &str, file_id: &str) -> Result<Vec<u8>> {
+    // 1. Placement plan (which shard lives where).
+    let (man, uid2, fid) = (st.manifest.clone(), uid.to_string(), file_id.to_string());
     let (_file, plan) = tokio::task::spawn_blocking(move || p2pnas_store::service::pull_plan(&man, &uid2, &fid))
         .await
         .map_err(join_err)??;
@@ -207,12 +218,118 @@ pub async fn download(
     }
 
     // 4. Reconstruct + decrypt.
-    let (id, fid2) = (st.identity.clone(), file_id.clone());
-    let bytes = tokio::task::spawn_blocking(move || p2pnas_store::service::reassemble(&id, &fid2, chunks_fetched))
+    let (id, fid2) = (st.identity.clone(), file_id.to_string());
+    tokio::task::spawn_blocking(move || p2pnas_store::service::reassemble(&id, &fid2, chunks_fetched))
+        .await
+        .map_err(join_err)?
+        .map_err(Into::into)
+}
+
+/// Download a file by its id.
+pub async fn download(
+    State(st): State<AppState>,
+    Extension(user): Extension<P2pUser>,
+    Path(file_id): Path<String>,
+) -> Result<Response> {
+    let bytes = reconstruct_file(&st, &user.id.to_string(), &file_id).await?;
+    Ok(([(header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response())
+}
+
+/// Download a file by its path (the path-based "My Cloud" mount).
+pub async fn download_path(
+    State(st): State<AppState>,
+    Extension(user): Extension<P2pUser>,
+    Query(q): Query<PathQuery>,
+) -> Result<Response> {
+    let uid = user.id.to_string();
+    let (man, uid2, path) = (st.manifest.clone(), uid.clone(), q.path.clone());
+    let file = tokio::task::spawn_blocking(move || p2pnas_store::service::get_file_by_path(&man, &uid2, &path))
+        .await
+        .map_err(join_err)??
+        .ok_or(P2pError::NotFound)?;
+    let bytes = reconstruct_file(&st, &uid, &file.file_id).await?;
+    Ok(([(header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response())
+}
+
+// ── Folder-aware "My Cloud" browsing (parity with Drive's Mon Drive) ─────────
+
+/// List a directory's immediate children (folders + files).
+pub async fn browse(
+    State(st): State<AppState>,
+    Extension(user): Extension<P2pUser>,
+    Query(q): Query<DirQuery>,
+) -> Result<Json<Value>> {
+    let (man, uid, dir) = (st.manifest.clone(), user.id.to_string(), q.path.unwrap_or_default());
+    let listing = tokio::task::spawn_blocking(move || p2pnas_store::service::browse(&man, &uid, &dir))
         .await
         .map_err(join_err)??;
+    let folders: Vec<Value> = listing
+        .folders
+        .iter()
+        .map(|p| json!({ "name": p.rsplit('/').next().unwrap_or(p), "path": p }))
+        .collect();
+    let files: Vec<Value> = listing
+        .files
+        .iter()
+        .map(|f| json!({
+            "name": f.path.rsplit('/').next().unwrap_or(&f.path),
+            "path": f.path,
+            "file_id": f.file_id,
+            "size": f.size,
+            "created_at": f.created_at,
+        }))
+        .collect();
+    Ok(Json(json!({ "folders": folders, "files": files })))
+}
 
-    Ok(([(header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response())
+/// Create a folder.
+pub async fn mkdir(
+    State(st): State<AppState>,
+    Extension(user): Extension<P2pUser>,
+    Json(body): Json<PathBody>,
+) -> Result<Json<Value>> {
+    let (man, uid, path) = (st.manifest.clone(), user.id.to_string(), body.path.clone());
+    tokio::task::spawn_blocking(move || p2pnas_store::service::mkdir(&man, &uid, &path))
+        .await
+        .map_err(join_err)??;
+    Ok(Json(json!({ "created": body.path })))
+}
+
+/// Rename or move a file/folder (path change only — no re-encryption).
+pub async fn rename(
+    State(st): State<AppState>,
+    Extension(user): Extension<P2pUser>,
+    Json(body): Json<RenameBody>,
+) -> Result<Json<Value>> {
+    let (man, uid, from, to) = (st.manifest.clone(), user.id.to_string(), body.from.clone(), body.to.clone());
+    tokio::task::spawn_blocking(move || p2pnas_store::service::rename(&man, &uid, &from, &to))
+        .await
+        .map_err(join_err)??;
+    Ok(Json(json!({ "from": body.from, "to": body.to })))
+}
+
+/// Delete a file or a folder subtree (by path); frees quota.
+pub async fn delete_path(
+    State(st): State<AppState>,
+    Extension(user): Extension<P2pUser>,
+    Json(body): Json<PathBody>,
+) -> Result<Json<Value>> {
+    let (man, store, uid, path) = (st.manifest.clone(), st.store.clone(), user.id.to_string(), body.path.clone());
+    let (freed_size, freed_stored) =
+        tokio::task::spawn_blocking(move || p2pnas_store::service::delete_path(&man, &store, &uid, &path))
+            .await
+            .map_err(join_err)??;
+
+    sqlx::query("UPDATE p2pnas.user_quota SET used_bytes = GREATEST(used_bytes - $2, 0), updated_at = now() WHERE user_id = $1")
+        .bind(user.id)
+        .bind(freed_size)
+        .execute(&st.db)
+        .await?;
+    sqlx::query("UPDATE p2pnas.node_local SET used_bytes = GREATEST(used_bytes - $1, 0), updated_at = now() WHERE id = 1")
+        .bind(freed_stored)
+        .execute(&st.db)
+        .await?;
+    Ok(Json(json!({ "deleted": body.path })))
 }
 
 /// Delete a file and free its quota.
