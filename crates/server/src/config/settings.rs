@@ -25,11 +25,8 @@ pub struct DiscoverySettings {
     /// Bootstrap nodes (`ip:udp_port`) to join the DHT overlay.
     #[serde(default)]
     pub dht_bootstrap: Vec<String>,
-    /// Path to a GeoLite2-Country `.mmdb` file (enables geo features). Optional.
-    #[serde(default)]
-    pub geoip_db: Option<String>,
     /// If non-empty, shards may only be placed on peers in these ISO countries
-    /// (jurisdiction constraint). Requires `geoip_db`.
+    /// (jurisdiction constraint). Country is resolved via the maps GeoIP service.
     #[serde(default)]
     pub geoip_allow: Vec<String>,
 }

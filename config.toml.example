@@ -39,10 +39,10 @@ mdns = true
 dht = false
 dht_port = 7475
 # dht_bootstrap = ["203.0.113.5:7475", "198.51.100.9:7475"]
-# GeoIP hors-ligne (optionnel) : fournir un fichier GeoLite2-Country .mmdb pour
-# activer les fonctions géo. geoip_allow = contrainte juridictionnelle : si non
-# vide, les shards ne sont placés que sur des pairs des pays listés (ISO).
-# geoip_db = "/var/lib/kubuno/modules/p2pnas/GeoLite2-Country.mmdb"
+# Contrainte juridictionnelle (optionnel) : si non vide, les shards ne sont placés
+# que sur des pairs des pays listés (ISO). Le pays est résolu via le service GeoIP
+# du module **maps** (qui possède la base .mmdb) ; si maps est absent, p2pnas reste
+# prudent (garde les données en local) et le signale.
 # geoip_allow = ["FR", "BE", "CH"]
 
 [logging]

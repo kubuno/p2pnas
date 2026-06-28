@@ -70,7 +70,6 @@ pub async fn repair_all(st: &AppState) -> RepairReport {
     }
     rep.peers_reachable = reachable.len();
     detect_self_ip_change(st, observed).await;
-    resolve_countries(st, &peers).await;
 
     // 2. Every file across all users.
     let man = st.manifest.clone();
@@ -354,35 +353,6 @@ async fn detect_self_ip_change(st: &AppState, observed: HashMap<String, usize>) 
         } else {
             tracing::info!(old = %old, new = %ip, "public IP changed — enqueueing locality rebalance");
             crate::jobs::enqueue(&st.db, "rebalance_locality", json!({ "reason": "ip_changed" })).await;
-        }
-    }
-}
-
-/// Resolve and store the country of this node (from its public IP) and of each
-/// peer (from its address) when an offline GeoIP database is configured. No-op
-/// otherwise.
-async fn resolve_countries(st: &AppState, peers: &[(String, String)]) {
-    if st.geoip.is_none() {
-        return;
-    }
-    if let Ok(Some(ip)) = sqlx::query_scalar::<_, Option<String>>("SELECT public_ip FROM p2pnas.node_local WHERE id = 1")
-        .fetch_one(&st.db)
-        .await
-    {
-        if let Some(country) = crate::geoip::country_of_addr(&st.geoip, &ip) {
-            let _ = sqlx::query("UPDATE p2pnas.node_local SET country = $1 WHERE id = 1")
-                .bind(country)
-                .execute(&st.db)
-                .await;
-        }
-    }
-    for (pid, addr) in peers {
-        if let Some(country) = crate::geoip::country_of_addr(&st.geoip, addr) {
-            let _ = sqlx::query("UPDATE p2pnas.peers SET country = $1 WHERE peer_id = $2")
-                .bind(country)
-                .bind(pid)
-                .execute(&st.db)
-                .await;
         }
     }
 }

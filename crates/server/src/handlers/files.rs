@@ -92,7 +92,7 @@ pub async fn upload(
         .await?;
 
     // Best-effort: spread the shards across peers (round-robin over [self] + peers).
-    distribute_shards(&st, &user.id.to_string(), &res.file_id).await;
+    distribute_shards(&st, user.id, &res.file_id).await;
 
     Ok(Json(json!({ "file_id": res.file_id, "path": q.path, "size": res.size })))
 }
@@ -101,7 +101,7 @@ pub async fn upload(
 /// placed by `placement::plan_placement` (prefer near peers, cap every location
 /// at PARITY for single-failure durability). Shards that can't be placed remotely
 /// stay local. No peers → everything stays local.
-async fn distribute_shards(st: &AppState, user_id: &str, file_id: &str) {
+async fn distribute_shards(st: &AppState, user: uuid::Uuid, file_id: &str) {
     // Skip peers already flagged `down` — they're known-bad, no point pinging.
     let all_peers: Vec<(String, String, Option<String>)> =
         sqlx::query_as("SELECT peer_id, addr, country FROM p2pnas.peers WHERE peer_id <> $1 AND status <> 'down'")
@@ -110,14 +110,45 @@ async fn distribute_shards(st: &AppState, user_id: &str, file_id: &str) {
             .await
             .unwrap_or_default();
 
-    // Jurisdiction constraint: if an allow-list is configured, only keep peers in
-    // an allowed country (unknown country → excluded, conservative).
-    let allow = &st.settings.discovery.geoip_allow;
-    let all_peers: Vec<(String, String)> = all_peers
-        .into_iter()
-        .filter(|(_, _, country)| crate::placement::jurisdiction_allowed(allow, country.as_deref()))
-        .map(|(pid, addr, _)| (pid, addr))
-        .collect();
+    // Jurisdiction constraint: only place on peers in an allowed country. Country
+    // is resolved by the maps GeoIP service (cached in peers.country). If maps is
+    // unavailable we CANNOT vet peers, so we keep everything local rather than risk
+    // violating the constraint — and surface why.
+    let allow = st.settings.discovery.geoip_allow.clone();
+    let all_peers: Vec<(String, String)> = if allow.is_empty() {
+        all_peers.into_iter().map(|(pid, addr, _)| (pid, addr)).collect()
+    } else {
+        let mut kept = Vec::new();
+        for (pid, addr, country) in all_peers {
+            let country = match country {
+                Some(c) => Some(c),
+                None => {
+                    let ip = addr.rsplit_once(':').map(|(h, _)| h).unwrap_or(&addr).to_string();
+                    match crate::maps_geoip::country(st, user, &ip).await {
+                        crate::maps_geoip::GeoOutcome::Resolved(c) => {
+                            if let Some(cc) = &c {
+                                let _ = sqlx::query("UPDATE p2pnas.peers SET country = $1 WHERE peer_id = $2")
+                                    .bind(cc).bind(&pid).execute(&st.db).await;
+                            }
+                            c
+                        }
+                        crate::maps_geoip::GeoOutcome::Unavailable => {
+                            tracing::warn!("jurisdiction constraint set but maps GeoIP unavailable — keeping shards local");
+                            let _ = sqlx::query("INSERT INTO p2pnas.events (kind, payload) VALUES ('geo_unavailable', $1)")
+                                .bind(serde_json::json!({ "reason": "maps module GeoIP unavailable; cannot enforce jurisdiction" }))
+                                .execute(&st.db)
+                                .await;
+                            return; // fail safe: do not distribute onto un-vetted peers
+                        }
+                    }
+                }
+            };
+            if crate::placement::jurisdiction_allowed(&allow, country.as_deref()) {
+                kept.push((pid, addr));
+            }
+        }
+        kept
+    };
 
     // Probe liveness AND measure latency; keep only peers that answer.
     let mut live: Vec<(String, String, f64)> = Vec::new(); // (peer_id, addr, rtt_ms)
@@ -144,7 +175,7 @@ async fn distribute_shards(st: &AppState, user_id: &str, file_id: &str) {
         );
     }
 
-    let (man, uid, fid) = (st.manifest.clone(), user_id.to_string(), file_id.to_string());
+    let (man, uid, fid) = (st.manifest.clone(), user.to_string(), file_id.to_string());
     let plan = match tokio::task::spawn_blocking(move || p2pnas_store::service::pull_plan(&man, &uid, &fid)).await {
         Ok(Ok((_, chunks))) => chunks,
         _ => return,
