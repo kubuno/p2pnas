@@ -97,8 +97,10 @@ pub async fn upload(
     Ok(Json(json!({ "file_id": res.file_id, "path": q.path, "size": res.size })))
 }
 
-/// Move each shard to a peer (round-robin over `[self] + peers`); shards that
-/// can't be placed remotely stay local. No peers → everything stays local.
+/// Spread a file's shards over peers, **latency-aware**: each chunk's shards are
+/// placed by `placement::plan_placement` (prefer near peers, cap every location
+/// at PARITY for single-failure durability). Shards that can't be placed remotely
+/// stay local. No peers → everything stays local.
 async fn distribute_shards(st: &AppState, user_id: &str, file_id: &str) {
     // Skip peers already flagged `down` — they're known-bad, no point pinging.
     let all_peers: Vec<(String, String)> =
@@ -108,25 +110,26 @@ async fn distribute_shards(st: &AppState, user_id: &str, file_id: &str) {
             .await
             .unwrap_or_default();
 
-    // Only spread onto peers that answer a liveness probe right now — placing a
-    // shard on a dead peer would just lose it.
-    let mut peers: Vec<(String, String)> = Vec::new();
+    // Probe liveness AND measure latency; keep only peers that answer.
+    let mut live: Vec<(String, String, f64)> = Vec::new(); // (peer_id, addr, rtt_ms)
     for (pid, addr) in all_peers {
-        if p2pnas_p2p::ping(&addr, &st.identity.peer_id, st.settings.server.port).await.is_ok() {
-            peers.push((pid, addr));
+        if let Ok(rtt) = p2pnas_p2p::ping_rtt(&addr, &st.identity.peer_id, st.settings.server.port).await {
+            live.push((pid, addr, rtt));
         }
     }
-    if peers.is_empty() {
+    if live.is_empty() {
         return;
     }
+    // Sort near → far so failover walks outward and indexing matches the plan.
+    live.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+    let peers: Vec<(String, String)> = live.iter().map(|(p, a, _)| (p.clone(), a.clone())).collect();
+    let rtts: Vec<f64> = live.iter().map(|(_, _, r)| *r).collect();
 
-    // Durability note: with L = 1(self) + peers locations, round-robin gives each
-    // ⌈14/L⌉ shards; single-failure survival needs ⌈14/L⌉ ≤ PARITY_SHARDS.
+    // Durability note: need ≥ ceil(TOTAL/PARITY) locations to survive 1 failure.
     let locations = peers.len() + 1;
-    let max_per_loc = TOTAL_SHARDS.div_ceil(locations);
-    if max_per_loc > p2pnas_core::erasure::PARITY_SHARDS {
+    if TOTAL_SHARDS.div_ceil(locations) > p2pnas_core::erasure::PARITY_SHARDS {
         tracing::warn!(
-            locations, max_per_loc,
+            locations,
             "low durability: too few peers to survive a single failure (need ≥ {} locations)",
             crate::repair::min_locations_for_durability()
         );
@@ -138,19 +141,18 @@ async fn distribute_shards(st: &AppState, user_id: &str, file_id: &str) {
         _ => return,
     };
 
-    // Decide placement (round-robin over [self] + peers; slot 0 keeps it local).
+    // Latency-aware plan (same for every chunk: shard index i → location).
+    let layout = crate::placement::plan_placement(&rtts, TOTAL_SHARDS, p2pnas_core::erasure::PARITY_SHARDS);
+
     // Each remote placement records its PRIMARY peer index; the task fails over to
-    // the next peers if the primary doesn't Ack.
+    // the next (next-nearest) peers if the primary doesn't Ack.
     let mut placements: Vec<(String, usize)> = Vec::new(); // (fragment_id, primary peer index)
-    let mut slot = 0usize;
     for (_chunk, shards) in plan {
         for s in shards {
-            let target = slot % (peers.len() + 1);
-            slot += 1;
-            if target == 0 {
-                continue; // keep on self
+            // Some(p) → peer p; None → keep on self.
+            if let Some(p) = layout.get(s.shard_index as usize).copied().flatten() {
+                placements.push((s.fragment_id, p));
             }
-            placements.push((s.fragment_id, target - 1));
         }
     }
 
