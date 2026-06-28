@@ -56,6 +56,29 @@ export interface EventRow {
   created_at: string
 }
 
+export interface NodeMetrics {
+  node: { contributed_bytes: number; used_bytes: number; hosted_bytes: number; available_bytes: number }
+  storage: { files: number; chunks: number; stored_bytes: number; hosted_shards: number }
+  peers: { total: number; active: number; down: number }
+  jobs: { pending: number; running: number }
+  discovery: { mdns: boolean; dht: boolean }
+  risk: { unrepairable_events: number }
+}
+
+export interface FileHealth {
+  file_id: string
+  path: string
+  size: number
+  chunks: number
+  data_shards: number
+  total_shards: number
+  min_reachable: number
+  fully_redundant: boolean
+  recoverable: boolean
+  single_failure_safe: boolean
+  at_risk: boolean
+}
+
 export const p2pnasApi = {
   status:    () => apiClient.get<NodeStatus>('/p2pnas/status').then(r => r.data),
   quotaMe:   () => apiClient.get<MyQuota>('/p2pnas/quota/me').then(r => r.data),
@@ -91,6 +114,12 @@ export const p2pnasApi = {
     apiClient.post<{ repair: RepairReport }>('/p2pnas/admin/repair').then(r => r.data.repair),
   listEvents: () =>
     apiClient.get<{ events: EventRow[] }>('/p2pnas/admin/events').then(r => r.data.events),
+  metrics: () =>
+    apiClient.get<NodeMetrics>('/p2pnas/admin/metrics').then(r => r.data),
+  rebalance: () =>
+    apiClient.post('/p2pnas/admin/rebalance'),
+  fileHealth: (fileId: string) =>
+    apiClient.get<FileHealth>(`/p2pnas/files/${fileId}/health`).then(r => r.data),
 }
 
 /** Relative "il y a …" formatting for last_seen / event timestamps. */

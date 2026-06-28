@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { HardDrive, Users, Save, Plus, ShieldCheck, RefreshCw, Trash2, Activity, AlertTriangle, Wifi, WifiOff } from 'lucide-react'
+import { HardDrive, Users, Save, Plus, ShieldCheck, RefreshCw, Trash2, Activity, AlertTriangle, Wifi, WifiOff, Gauge, Radar, ShieldAlert, CheckCircle2, FileSearch } from 'lucide-react'
 import { useConfirm } from '@kubuno/sdk'
 import { ConfirmDialog } from '@ui'
 import {
   p2pnasApi, formatBytes, timeAgo,
   type NodeStatus, type QuotaRow, type PeerRow, type RepairReport, type EventRow,
+  type NodeMetrics, type FileHealth, type FileRow,
 } from './api'
 
 const GIB = 1024 * 1024 * 1024
@@ -33,6 +34,9 @@ export default function P2pnasSettingsPage() {
   const [newPeer, setNewPeer] = useState('')
   const [repair, setRepair] = useState<RepairReport | null>(null)
   const [repairing, setRepairing] = useState(false)
+  const [metrics, setMetrics] = useState<NodeMetrics | null>(null)
+  const [files, setFiles] = useState<FileRow[]>([])
+  const [health, setHealth] = useState<Record<string, FileHealth>>({})
   const [msg, setMsg] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const { confirm, confirmState, handleConfirm, handleCancel } = useConfirm()
@@ -42,12 +46,23 @@ export default function P2pnasSettingsPage() {
     setStatus(s)
     setContrib(toGib(s.node.contributed_bytes))
     try {
-      const [q, p, ev] = await Promise.all([
+      const [q, p, ev, m, f] = await Promise.all([
         p2pnasApi.listQuotas(), p2pnasApi.listPeers(), p2pnasApi.listEvents(),
+        p2pnasApi.metrics(), p2pnasApi.listFiles(),
       ])
-      setQuotas(q); setPeers(p); setEvents(ev); setIsAdmin(true)
+      setQuotas(q); setPeers(p); setEvents(ev); setMetrics(m); setFiles(f); setIsAdmin(true)
     } catch {
       setIsAdmin(false)
+    }
+  }
+
+  async function checkHealth(f: FileRow) {
+    setErr(null)
+    try {
+      const h = await p2pnasApi.fileHealth(f.file_id)
+      setHealth(prev => ({ ...prev, [f.file_id]: h }))
+    } catch (e) {
+      setErr(errMsg(e, 'Vérification impossible'))
     }
   }
   useEffect(() => { void load() }, [])
@@ -135,14 +150,22 @@ export default function P2pnasSettingsPage() {
                 <ShieldCheck className="w-5 h-5 text-primary" />
                 <h2 className="font-semibold text-text-primary">Résilience & réparation</h2>
               </div>
-              <button
-                onClick={doRepair}
-                disabled={repairing}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-primary text-white text-sm hover:bg-primary-hover disabled:opacity-50"
-              >
-                <RefreshCw className={`w-4 h-4 ${repairing ? 'animate-spin' : ''}`} />
-                {repairing ? 'Réparation…' : 'Lancer une réparation'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => run(() => p2pnasApi.rebalance(), 'Rééquilibrage mis en file')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-border text-sm hover:bg-surface-2 text-text-secondary"
+                >
+                  <RefreshCw className="w-4 h-4" /> Rééquilibrer (en file)
+                </button>
+                <button
+                  onClick={doRepair}
+                  disabled={repairing}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-primary text-white text-sm hover:bg-primary-hover disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-4 h-4 ${repairing ? 'animate-spin' : ''}`} />
+                  {repairing ? 'Réparation…' : 'Lancer une réparation'}
+                </button>
+              </div>
             </div>
             <p className="text-sm text-text-tertiary mb-3">
               Vérifie chaque fichier et re-réplique les fragments dont l’hôte est devenu injoignable,
@@ -162,6 +185,62 @@ export default function P2pnasSettingsPage() {
                 />
               </div>
             )}
+          </section>
+        )}
+
+        {/* ── Admin: métriques du nœud + état de la découverte ────────── */}
+        {isAdmin && metrics && (
+          <section className="bg-surface-0 rounded-lg border border-border p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <Gauge className="w-5 h-5 text-primary" />
+              <h2 className="font-semibold text-text-primary">Métriques du nœud</h2>
+            </div>
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 text-sm">
+              <Stat label="Fichiers" value={String(metrics.storage.files)} />
+              <Stat label="Chunks" value={String(metrics.storage.chunks)} />
+              <Stat label="Stockés (données)" value={formatBytes(metrics.storage.stored_bytes)} />
+              <Stat label="Hébergés pour autrui" value={`${metrics.storage.hosted_shards} (${formatBytes(metrics.node.hosted_bytes)})`} />
+              <Stat label="Pairs actifs" value={String(metrics.peers.active)} />
+              <Stat label="Pairs hors-ligne" value={String(metrics.peers.down)} danger={metrics.peers.down > 0} />
+              <Stat label="Jobs en file" value={String(metrics.jobs.pending + metrics.jobs.running)} />
+              <Stat label="Alertes perte" value={String(metrics.risk.unrepairable_events)} danger={metrics.risk.unrepairable_events > 0} />
+            </div>
+            <div className="flex items-center gap-2 mt-3 text-sm">
+              <Radar className="w-4 h-4 text-text-tertiary" />
+              <span className="text-text-secondary">Découverte :</span>
+              <DiscoveryBadge label="mDNS (LAN)" on={metrics.discovery.mdns} />
+              <DiscoveryBadge label="DHT (Internet)" on={metrics.discovery.dht} />
+            </div>
+          </section>
+        )}
+
+        {/* ── Durabilité par fichier ──────────────────────────────────── */}
+        {isAdmin && files.length > 0 && (
+          <section className="bg-surface-0 rounded-lg border border-border p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <ShieldAlert className="w-5 h-5 text-primary" />
+              <h2 className="font-semibold text-text-primary">Durabilité des fichiers</h2>
+            </div>
+            <table className="w-full text-sm">
+              <tbody>
+                {files.map(f => {
+                  const h = health[f.file_id]
+                  return (
+                    <tr key={f.file_id} className="border-b border-border/60">
+                      <td className="py-1.5 truncate max-w-xs" title={f.path}>{f.path}</td>
+                      <td className="py-1.5 text-text-tertiary text-xs w-24">{formatBytes(f.size)}</td>
+                      <td className="py-1.5 w-56">{h ? <HealthBadge h={h} /> : <span className="text-text-tertiary text-xs">—</span>}</td>
+                      <td className="py-1.5 text-right">
+                        <button onClick={() => checkHealth(f)}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-surface-2 text-text-secondary hover:text-primary">
+                          <FileSearch className="w-3.5 h-3.5" /> Vérifier
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </section>
         )}
 
@@ -307,6 +386,25 @@ function Stat({ label, value, danger }: { label: string; value: string; danger?:
       <div className={`font-medium ${danger ? 'text-red-600' : 'text-text-primary'}`}>{value}</div>
     </div>
   )
+}
+
+function DiscoveryBadge({ label, on }: { label: string; on: boolean }) {
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs ${on ? 'bg-green-50 text-green-700' : 'bg-surface-2 text-text-tertiary'}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${on ? 'bg-green-500' : 'bg-text-tertiary'}`} />
+      {label}
+    </span>
+  )
+}
+
+function HealthBadge({ h }: { h: FileHealth }) {
+  if (!h.recoverable) {
+    return <span className="inline-flex items-center gap-1 text-red-600 text-xs font-medium"><AlertTriangle className="w-3.5 h-3.5" /> À risque ({h.min_reachable}/{h.data_shards} requis)</span>
+  }
+  if (!h.single_failure_safe) {
+    return <span className="inline-flex items-center gap-1 text-amber-600 text-xs font-medium"><ShieldAlert className="w-3.5 h-3.5" /> Récupérable ({h.min_reachable}/{h.total_shards})</span>
+  }
+  return <span className="inline-flex items-center gap-1 text-green-600 text-xs font-medium"><CheckCircle2 className="w-3.5 h-3.5" /> Sûr ({h.min_reachable}/{h.total_shards})</span>
 }
 
 function ReliabilityBadge({ score }: { score: number }) {
