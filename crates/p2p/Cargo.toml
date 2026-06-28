@@ -13,4 +13,6 @@ async-trait = "0.1"
 tracing     = "0.1"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio   = { version = "1", features = ["full"] }
+# For the `shardhost` test peer to announce itself over mDNS (discovery tests).
+mdns-sd = "0.11"

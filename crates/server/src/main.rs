@@ -213,6 +213,16 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Zero-config LAN discovery: announce + auto-add peers found via mDNS.
+    if settings.discovery.mdns {
+        let db = state.db.clone();
+        let id = state.identity.clone();
+        let (api_port, p2p_port) = (settings.server.port, settings.p2p.port);
+        tokio::spawn(async move {
+            kubuno_p2pnas::discovery::mdns::run(db, id, api_port, p2p_port).await;
+        });
+    }
+
     // Periodic self-healing: probe peer liveness (refreshing reliability scores)
     // and re-replicate any shard whose host has gone unreachable. Admin can also
     // trigger a pass on demand via POST /admin/repair.

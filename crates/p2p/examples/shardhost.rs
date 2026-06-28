@@ -40,5 +40,28 @@ async fn main() {
     let peer_id = a.get(3).cloned().unwrap_or_else(|| "testpeerhost00000000000000000aaa".into());
     let listener = TcpListener::bind(&addr).await.expect("bind shardhost");
     println!("shardhost peer_id={peer_id} addr={addr} dir={dir}");
+
+    // Optionally announce over mDNS so a running p2pnas node auto-discovers us:
+    //   shardhost <addr> <dir> <peer_id> --mdns
+    if a.iter().any(|x| x == "--mdns") {
+        let port: u16 = addr.rsplit(':').next().and_then(|p| p.parse().ok()).unwrap_or(7475);
+        announce_mdns(&peer_id, port);
+    }
+
     serve(listener, Arc::new(FileHost { id: peer_id, dir: dir.into() })).await;
+}
+
+/// Keep an mDNS `_p2pnas._tcp` registration alive for the life of the process.
+fn announce_mdns(peer_id: &str, port: u16) {
+    use mdns_sd::{ServiceDaemon, ServiceInfo};
+    let daemon = ServiceDaemon::new().expect("mDNS daemon");
+    let host = format!("{peer_id}.local.");
+    let props = [("peer_id", peer_id)];
+    let info = ServiceInfo::new("_p2pnas._tcp.local.", peer_id, &host, "", port, &props[..])
+        .expect("ServiceInfo")
+        .enable_addr_auto();
+    daemon.register(info).expect("mDNS register");
+    println!("shardhost announcing _p2pnas._tcp on port {port}");
+    // Leak the daemon so the registration persists.
+    std::mem::forget(daemon);
 }

@@ -8,9 +8,23 @@ pub struct Settings {
     pub server:   ServerSettings,
     pub core:     CoreSettings,
     pub database: DatabaseSettings,
-    pub storage:  StorageSettings,
-    pub p2p:      P2pSettings,
-    pub logging:  LoggingSettings,
+    pub storage:   StorageSettings,
+    pub p2p:       P2pSettings,
+    pub discovery: DiscoverySettings,
+    pub logging:   LoggingSettings,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DiscoverySettings {
+    /// Announce + browse `_p2pnas._tcp` on the LAN (zero-config peer discovery).
+    pub mdns: bool,
+    /// Wide-area discovery via the embedded Kademlia DHT.
+    pub dht: bool,
+    /// UDP port the DHT node binds (distinct from the TCP P2P port).
+    pub dht_port: u16,
+    /// Bootstrap nodes (`ip:udp_port`) to join the DHT overlay.
+    #[serde(default)]
+    pub dht_bootstrap: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -102,6 +116,9 @@ impl Settings {
             .set_default("storage.data_dir", "/var/lib/kubuno/modules/p2pnas")?
             .set_default("p2p.host", "0.0.0.0")?
             .set_default("p2p.port", 7474i64)?
+            .set_default("discovery.mdns", true)?
+            .set_default("discovery.dht", false)?
+            .set_default("discovery.dht_port", 7475i64)?
             .set_default("logging.level", "info")?
             .set_default("logging.format", "pretty")?
             .add_source(File::with_name("config").required(false))

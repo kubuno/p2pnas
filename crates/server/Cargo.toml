@@ -40,5 +40,9 @@ chrono             = { version = "0.4",  features = ["serde"] }
 clap               = { version = "4",    features = ["derive", "env"] }
 toml               = "0.8"
 
+# Zero-config LAN peer discovery (pure-Rust mDNS/DNS-SD; spawns threads, never
+# a subprocess, so it stays within the seccomp execve ban).
+mdns-sd            = "0.11"
+
 # Shared core crate — git tag in prod, patched to a local checkout for offline dev.
 kubuno-seccomp = { git = "https://github.com/kubuno/core", tag = "seccomp-v0.1.0", package = "kubuno-seccomp" }
