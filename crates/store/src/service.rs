@@ -100,8 +100,9 @@ pub fn push(
                 c.recovery[i - DATA_SHARDS].clone()
             };
             store.write(&frag, &bytes)?;
+            let hash = manifest::shard_hash(&bytes);
             manifest::insert_shard(&tx, &ShardRow {
-                fragment_id: frag, chunk_id: cid.clone(), shard_index: i as i64, location: "local".into(),
+                fragment_id: frag, chunk_id: cid.clone(), shard_index: i as i64, location: "local".into(), hash,
             })?;
         }
     }
@@ -213,6 +214,22 @@ pub fn set_location(manifest: &Manifest, fragment_id: &str, location: &str) -> R
 /// Read a locally-held shard's bytes (None if absent).
 pub fn read_local(store: &ChunkStore, fragment_id: &str) -> Option<Vec<u8>> {
     store.read(fragment_id).ok()
+}
+
+/// True if `bytes` match `expected` (empty `expected` = legacy row, skip check).
+pub fn verify_hash(bytes: &[u8], expected: &str) -> bool {
+    expected.is_empty() || manifest::shard_hash(bytes) == expected
+}
+
+/// Read a local shard and verify its content hash; None if missing or corrupt.
+pub fn read_local_verified(store: &ChunkStore, fragment_id: &str, expected: &str) -> Option<Vec<u8>> {
+    let bytes = store.read(fragment_id).ok()?;
+    if verify_hash(&bytes, expected) {
+        Some(bytes)
+    } else {
+        tracing::warn!(fragment_id, "local shard failed integrity check (corrupt) — treating as lost");
+        None
+    }
 }
 
 /// Pad a (possibly short, last) data-shard slice to the uniform shard length so

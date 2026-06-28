@@ -10,4 +10,4 @@ pub mod service;
 pub use chunkstore::ChunkStore;
 pub use error::{Result, StoreError};
 pub use identity::NodeIdentity;
-pub use manifest::{ChunkRow, FileRow, Manifest, ShardRow};
+pub use manifest::{shard_hash, ChunkRow, FileRow, Manifest, ShardRow};
