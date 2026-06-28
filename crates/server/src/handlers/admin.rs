@@ -154,6 +154,11 @@ pub async fn metrics(State(st): State<AppState>) -> Result<Json<Value>> {
             .fetch_one(&st.db)
             .await
             .unwrap_or((0, 0, 0));
+    let (public_ip, country): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT public_ip, country FROM p2pnas.node_local WHERE id = 1")
+            .fetch_one(&st.db)
+            .await
+            .unwrap_or((None, None));
     let (peers_total, peers_active, peers_down): (i64, i64, i64) = sqlx::query_as(
         "SELECT COUNT(*), COUNT(*) FILTER (WHERE status = 'active'), COUNT(*) FILTER (WHERE status = 'down') FROM p2pnas.peers",
     )
@@ -186,6 +191,7 @@ pub async fn metrics(State(st): State<AppState>) -> Result<Json<Value>> {
         "node": {
             "contributed_bytes": contributed, "used_bytes": used, "hosted_bytes": hosted,
             "available_bytes": (contributed - used - hosted).max(0),
+            "public_ip": public_ip, "country": country,
         },
         "storage": { "files": files, "chunks": chunks, "stored_bytes": stored, "hosted_shards": hosted_shards },
         "peers": { "total": peers_total, "active": peers_active, "down": peers_down },
