@@ -8,6 +8,8 @@ import {
   type NodeMetrics, type FileHealth, type FileRow, type FilePlacement,
 } from './api'
 
+type PeerMarker = { lat: number; lng: number; label?: string; color?: string }
+
 const GIB = 1024 * 1024 * 1024
 const toBytes = (gib: string) => Math.round((parseFloat(gib) || 0) * GIB)
 const toGib = (bytes: number) => (bytes / GIB).toFixed(2)
@@ -41,8 +43,39 @@ export default function P2pnasSettingsPage() {
   const [msg, setMsg] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const { confirm, confirmState, handleConfirm, handleCancel } = useConfirm()
-  // Geo features (peer country / jurisdiction) are provided by the maps module.
+  // Geo features (peer country / jurisdiction / map) are provided by the maps
+  // module. These are undefined when maps isn't installed/active → degrade.
   const geoAvailable = !!ModuleServiceRegistry.get('maps', 'geoip')
+  const MapsMiniMap = ModuleServiceRegistry.get<React.ComponentType<{ markers: PeerMarker[]; height?: number }>>('maps', 'MiniMap')
+  const [peerMap, setPeerMap] = useState<PeerMarker[] | null>(null)
+  const [mapBusy, setMapBusy] = useState(false)
+
+  async function showPeerMap() {
+    const geoip = ModuleServiceRegistry.get<(ip: string) => Promise<{ lat?: number | null; lng?: number | null }>>('maps', 'geoip')
+    if (!geoip) return
+    setMapBusy(true)
+    try {
+      const out: PeerMarker[] = []
+      // This node (from its discovered public IP).
+      const selfIp = metrics?.node && (metrics.node as { public_ip?: string | null }).public_ip
+      if (selfIp) {
+        const g = await geoip(selfIp)
+        if (g.lat != null && g.lng != null) out.push({ lat: g.lat, lng: g.lng, label: 'Ce nœud', color: '#1a73e8' })
+      }
+      for (const p of peers) {
+        const ip = p.addr.split(':')[0]
+        const g = await geoip(ip)
+        if (g.lat != null && g.lng != null) {
+          out.push({ lat: g.lat, lng: g.lng, label: `${p.peer_id.slice(0, 10)}… (${p.addr})`, color: p.rtt_ms != null && p.rtt_ms < 150 ? '#1e8e3e' : '#d93025' })
+        }
+      }
+      setPeerMap(out)
+    } catch (e) {
+      setErr(errMsg(e, 'Carte indisponible'))
+    } finally {
+      setMapBusy(false)
+    }
+  }
 
   async function load() {
     const s = await p2pnasApi.status()
@@ -349,6 +382,35 @@ export default function P2pnasSettingsPage() {
                 <Plus className="w-4 h-4" /> Ajouter
               </button>
             </div>
+          </section>
+        )}
+
+        {/* ── Carte géographique des pairs (rendue par le module maps) ── */}
+        {isAdmin && geoAvailable && MapsMiniMap && (
+          <section className="bg-surface-0 rounded-lg border border-border p-5">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Radar className="w-5 h-5 text-primary" />
+                <h2 className="font-semibold text-text-primary">Carte des pairs</h2>
+              </div>
+              <button
+                onClick={showPeerMap}
+                disabled={mapBusy}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-border text-sm hover:bg-surface-2 text-text-secondary disabled:opacity-50"
+              >
+                <Radar className={`w-4 h-4 ${mapBusy ? 'animate-spin' : ''}`} />
+                {mapBusy ? 'Localisation…' : peerMap ? 'Actualiser' : 'Afficher la carte'}
+              </button>
+            </div>
+            {peerMap && peerMap.length === 0 && (
+              <p className="text-sm text-text-tertiary">Aucun pair géolocalisable (IP privées / non résolues).</p>
+            )}
+            {peerMap && peerMap.length > 0 && <MapsMiniMap markers={peerMap} height={320} />}
+            {!peerMap && (
+              <p className="text-sm text-text-tertiary">
+                Affiche ce nœud et ses pairs sur une carte, par localisation GeoIP (rendue par le module maps).
+              </p>
+            )}
           </section>
         )}
 
