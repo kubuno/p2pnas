@@ -9,6 +9,9 @@ description = "p2pnas — embedded peer-to-peer transport (handshake + shard sto
 tokio       = { version = "1", features = ["net", "io-util", "rt", "macros", "time", "sync"] }
 serde       = { version = "1", features = ["derive"] }
 serde_json  = "1"
+# Compact binary framing for the wire protocol — JSON encodes shard bytes
+# (Vec<u8>) as a number array ~4x larger and far slower to (de)serialize.
+bincode     = "1.3"
 async-trait = "0.1"
 tracing     = "0.1"
 # 160-bit Kademlia node IDs derived from the peer_id.

@@ -135,6 +135,8 @@ async fn distribute_shards(st: &AppState, user_id: &str, file_id: &str) {
         _ => return,
     };
 
+    // Decide placement (round-robin over [self] + peers; slot 0 keeps it local).
+    let mut placements: Vec<(String, String, String)> = Vec::new(); // (fragment_id, peer_id, addr)
     let mut slot = 0usize;
     for (_chunk, shards) in plan {
         for s in shards {
@@ -144,27 +146,32 @@ async fn distribute_shards(st: &AppState, user_id: &str, file_id: &str) {
                 continue; // keep on self
             }
             let (peer_id, addr) = peers[target - 1].clone();
+            placements.push((s.fragment_id, peer_id, addr));
+        }
+    }
 
-            let store = st.store.clone();
-            let frag = s.fragment_id.clone();
-            let bytes = match tokio::task::spawn_blocking(move || p2pnas_store::service::read_local(&store, &frag)).await {
-                Ok(Some(b)) => b,
-                _ => continue,
-            };
-
+    // Move shards to their targets concurrently — one in-flight StoreShard per
+    // placement instead of strictly sequential round-trips.
+    let mut set = tokio::task::JoinSet::new();
+    for (frag, peer_id, addr) in placements {
+        let st = st.clone();
+        set.spawn(async move {
+            let (store, f) = (st.store.clone(), frag.clone());
+            let Ok(Some(bytes)) = tokio::task::spawn_blocking(move || p2pnas_store::service::read_local(&store, &f)).await else { return };
             let msg = P2pMessage::StoreShard {
-                fragment_id: s.fragment_id.clone(),
+                fragment_id: frag.clone(),
                 owner_peer_id: st.identity.peer_id.clone(),
                 data: bytes,
             };
             if let Ok(P2pMessage::Ack { .. }) = p2pnas_p2p::request(&addr, &msg).await {
-                let (man, frag, pid) = (st.manifest.clone(), s.fragment_id.clone(), peer_id.clone());
-                let _ = tokio::task::spawn_blocking(move || p2pnas_store::service::set_location(&man, &frag, &pid)).await;
-                let (store, frag2) = (st.store.clone(), s.fragment_id.clone());
-                let _ = tokio::task::spawn_blocking(move || store.delete(&frag2)).await;
+                let (man, f2, pid) = (st.manifest.clone(), frag.clone(), peer_id);
+                let _ = tokio::task::spawn_blocking(move || p2pnas_store::service::set_location(&man, &f2, &pid)).await;
+                let (store2, f3) = (st.store.clone(), frag);
+                let _ = tokio::task::spawn_blocking(move || store2.delete(&f3)).await;
             }
-        }
+        });
     }
+    while set.join_next().await.is_some() {}
 }
 
 /// List the user's files.
@@ -192,33 +199,46 @@ async fn reconstruct_file(st: &AppState, uid: &str, file_id: &str) -> Result<Vec
         .unwrap_or_default();
 
     // 3. Gather every shard (local read or P2P GetShard); RS tolerates losses.
+    //    Each chunk's shards are fetched concurrently (parallel local reads +
+    //    in-flight GetShard round-trips) rather than one at a time.
     let mut chunks_fetched = Vec::with_capacity(plan.len());
     for (chunk, shards) in plan {
         let mut present: Vec<Option<Vec<u8>>> = vec![None; TOTAL_SHARDS];
+        let mut set = tokio::task::JoinSet::new();
         for s in shards {
-            let bytes = if s.location == "local" {
-                // Integrity-checked read: a corrupt local shard is treated as lost
-                // (RS reconstructs it from the others).
-                let (store, frag, hash) = (st.store.clone(), s.fragment_id.clone(), s.hash.clone());
-                tokio::task::spawn_blocking(move || p2pnas_store::service::read_local_verified(&store, &frag, &hash))
-                    .await
-                    .ok()
-                    .flatten()
-            } else if let Some((_, addr)) = peers.iter().find(|(pid, _)| pid == &s.location) {
-                match p2pnas_p2p::request(addr, &P2pMessage::GetShard { fragment_id: s.fragment_id.clone() }).await {
-                    // Verify the peer returned the bytes we expect (tamper/corruption).
-                    Ok(P2pMessage::ShardData { data, .. })
-                        if s.hash.is_empty() || p2pnas_p2p::content_hash(&data) == s.hash =>
-                    {
-                        Some(data)
+            let st = st.clone();
+            let peers = peers.clone();
+            set.spawn(async move {
+                let idx = s.shard_index as usize;
+                let bytes = if s.location == "local" {
+                    // Integrity-checked read: a corrupt local shard is treated as
+                    // lost (RS reconstructs it from the others).
+                    let (store, frag, hash) = (st.store.clone(), s.fragment_id.clone(), s.hash.clone());
+                    tokio::task::spawn_blocking(move || p2pnas_store::service::read_local_verified(&store, &frag, &hash))
+                        .await
+                        .ok()
+                        .flatten()
+                } else if let Some((_, addr)) = peers.iter().find(|(pid, _)| pid == &s.location) {
+                    match p2pnas_p2p::request(addr, &P2pMessage::GetShard { fragment_id: s.fragment_id.clone() }).await {
+                        // Verify the peer returned the bytes we expect.
+                        Ok(P2pMessage::ShardData { data, .. })
+                            if s.hash.is_empty() || p2pnas_p2p::content_hash(&data) == s.hash =>
+                        {
+                            Some(data)
+                        }
+                        _ => None,
                     }
-                    _ => None,
+                } else {
+                    None
+                };
+                (idx, bytes)
+            });
+        }
+        while let Some(res) = set.join_next().await {
+            if let Ok((idx, bytes)) = res {
+                if let Some(cell) = present.get_mut(idx) {
+                    *cell = bytes;
                 }
-            } else {
-                None
-            };
-            if let Some(cell) = present.get_mut(s.shard_index as usize) {
-                *cell = bytes;
             }
         }
         chunks_fetched.push((chunk, present));

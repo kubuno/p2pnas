@@ -40,6 +40,7 @@ pub async fn serve(listener: TcpListener, handler: Arc<dyn ShardHandler>) {
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
+                let _ = stream.set_nodelay(true);
                 let h = handler.clone();
                 tokio::spawn(async move {
                     if let Err(e) = handle_conn(stream, h).await {

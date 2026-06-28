@@ -15,6 +15,7 @@ pub async fn request(addr: &str, msg: &P2pMessage) -> std::io::Result<P2pMessage
     let mut stream = timeout(CONNECT_TIMEOUT, TcpStream::connect(addr))
         .await
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "connect timeout"))??;
+    let _ = stream.set_nodelay(true); // shard round-trips are latency-sensitive
     timeout(IO_TIMEOUT, async {
         write_message(&mut stream, msg).await?;
         read_message(&mut stream).await

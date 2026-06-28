@@ -60,11 +60,11 @@ pub async fn read_message(stream: &mut TcpStream) -> std::io::Result<P2pMessage>
     }
     let mut buf = vec![0u8; len as usize];
     stream.read_exact(&mut buf).await?;
-    serde_json::from_slice(&buf).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    bincode::deserialize(&buf).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
 pub async fn write_message(stream: &mut TcpStream, msg: &P2pMessage) -> std::io::Result<()> {
-    let data = serde_json::to_vec(msg).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let data = bincode::serialize(msg).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     stream.write_u32_le(data.len() as u32).await?;
     stream.write_all(&data).await?;
     stream.flush().await?;
