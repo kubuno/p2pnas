@@ -336,12 +336,25 @@ async fn detect_self_ip_change(st: &AppState, observed: HashMap<String, usize>) 
         .execute(&st.db)
         .await;
     if let Some(old) = prev {
-        tracing::info!(old = %old, new = %ip, "public IP changed — enqueueing locality rebalance");
+        // Always record the change; only auto-trigger a rebalance if we haven't
+        // re-homed recently (hysteresis against a flapping IP).
         let _ = sqlx::query("INSERT INTO p2pnas.events (kind, payload) VALUES ('ip_changed', $1)")
             .bind(json!({ "old": old, "new": ip }))
             .execute(&st.db)
             .await;
-        crate::jobs::enqueue(&st.db, "rebalance_locality", json!({ "reason": "ip_changed" })).await;
+        let recent: Option<bool> = sqlx::query_scalar(
+            "SELECT last_rebalance_at > now() - interval '30 minutes' FROM p2pnas.node_local WHERE id = 1",
+        )
+        .fetch_one(&st.db)
+        .await
+        .ok()
+        .flatten();
+        if recent == Some(true) {
+            tracing::info!(old = %old, new = %ip, "public IP changed but rebalanced recently — skipping (cooldown)");
+        } else {
+            tracing::info!(old = %old, new = %ip, "public IP changed — enqueueing locality rebalance");
+            crate::jobs::enqueue(&st.db, "rebalance_locality", json!({ "reason": "ip_changed" })).await;
+        }
     }
 }
 

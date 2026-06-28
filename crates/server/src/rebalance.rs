@@ -61,6 +61,22 @@ pub async fn rebalance_all(st: &AppState) -> RebalanceReport {
         _ => return rep,
     };
 
+    // Target shard COUNT per location (which specific shard sits where doesn't
+    // matter — any shard reconstructs). Count-based moves only touch the delta, so
+    // a placement that already matches the target distribution is left untouched
+    // (built-in hysteresis: no churn when the optimum is unchanged).
+    let mut target: HashMap<String, usize> = HashMap::new();
+    for loc in &layout {
+        let id = match loc {
+            None => "local".to_string(),
+            Some(p) => match sorted_ids.get(*p) {
+                Some(id) => id.clone(),
+                None => continue,
+            },
+        };
+        *target.entry(id).or_default() += 1;
+    }
+
     for file in files {
         rep.files_scanned += 1;
         let man = st.manifest.clone();
@@ -70,36 +86,73 @@ pub async fn rebalance_all(st: &AppState) -> RebalanceReport {
             _ => continue,
         };
         for (_chunk, shards) in plan {
+            // Group this chunk's shards by current location.
+            let mut current: HashMap<String, Vec<_>> = HashMap::new();
             for s in shards {
-                let desired = match layout.get(s.shard_index as usize).copied().flatten() {
-                    None => "local".to_string(),
-                    Some(p) => match sorted_ids.get(p) {
-                        Some(id) => id.clone(),
-                        None => continue,
-                    },
-                };
-                if s.location == desired {
-                    continue; // already optimal
+                current.entry(s.location.clone()).or_default().push(s);
+            }
+
+            // Donors: shards beyond a location's target, but only REACHABLE ones we
+            // can actually relocate (unreachable excess is the repair pass's job).
+            let mut pool = Vec::new();
+            for (loc, mut here) in current.iter().map(|(k, v)| (k.clone(), v.clone())).collect::<Vec<_>>() {
+                let keep = target.get(&loc).copied().unwrap_or(0);
+                let reachable_here = loc == "local" || reachable.contains_key(&loc);
+                while here.len() > keep && reachable_here {
+                    if let Some(s) = here.pop() {
+                        pool.push(s);
+                    }
                 }
-                // Fetch the current (reachable) copy; skip if we can't get it
-                // intact — repair will deal with a missing/corrupt shard.
-                let Some(bytes) = repair::fetch_shard(st, &reachable, &s).await else { continue };
-                if !s.hash.is_empty() && p2pnas_p2p::content_hash(&bytes) != s.hash {
-                    continue;
-                }
-                // place → manifest → drop old (safe ordering: a crash mid-way
-                // leaves either the old or both copies, never zero).
-                if repair::place_shard(st, &reachable, &desired, &s.fragment_id, &bytes).await {
-                    let (m, frag, loc) = (st.manifest.clone(), s.fragment_id.clone(), desired.clone());
-                    let _ = tokio::task::spawn_blocking(move || p2pnas_store::service::set_location(&m, &frag, &loc)).await;
-                    repair::drop_shard(st, &reachable, &s.location, &s.fragment_id).await;
-                    rep.shards_moved += 1;
+                current.insert(loc, here);
+            }
+
+            // Receivers (near → far: local first, then peers by ascending rtt) take
+            // from the pool until they reach their target.
+            let mut receivers: Vec<String> = vec!["local".to_string()];
+            receivers.extend(sorted_ids.iter().cloned());
+            for loc in receivers {
+                let want = target.get(&loc).copied().unwrap_or(0);
+                let have = current.get(&loc).map(|v| v.len()).unwrap_or(0);
+                for _ in have..want {
+                    let Some(s) = pool.pop() else { break };
+                    if move_shard(st, &reachable, &s, &loc).await {
+                        rep.shards_moved += 1;
+                    }
                 }
             }
         }
     }
+
     if rep.shards_moved > 0 {
         tracing::info!(moved = rep.shards_moved, files = rep.files_scanned, "locality rebalance moved shards");
     }
+    let _ = sqlx::query("UPDATE p2pnas.node_local SET last_rebalance_at = now() WHERE id = 1")
+        .execute(&st.db)
+        .await;
     rep
+}
+
+/// Move one shard from its current home to `dest` ("local" or a peer_id):
+/// fetch (verified) → place → manifest → drop old. Safe ordering — a crash mid-way
+/// leaves either the old or both copies, never zero. Returns true on success.
+async fn move_shard(
+    st: &AppState,
+    reachable: &HashMap<String, String>,
+    s: &p2pnas_store::ShardRow,
+    dest: &str,
+) -> bool {
+    if s.location == dest {
+        return false;
+    }
+    let Some(bytes) = repair::fetch_shard(st, reachable, s).await else { return false };
+    if !s.hash.is_empty() && p2pnas_p2p::content_hash(&bytes) != s.hash {
+        return false;
+    }
+    if !repair::place_shard(st, reachable, dest, &s.fragment_id, &bytes).await {
+        return false;
+    }
+    let (m, frag, loc) = (st.manifest.clone(), s.fragment_id.clone(), dest.to_string());
+    let _ = tokio::task::spawn_blocking(move || p2pnas_store::service::set_location(&m, &frag, &loc)).await;
+    repair::drop_shard(st, reachable, &s.location, &s.fragment_id).await;
+    true
 }

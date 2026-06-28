@@ -115,7 +115,7 @@ async fn distribute_shards(st: &AppState, user_id: &str, file_id: &str) {
     let allow = &st.settings.discovery.geoip_allow;
     let all_peers: Vec<(String, String)> = all_peers
         .into_iter()
-        .filter(|(_, _, country)| allow.is_empty() || country.as_deref().is_some_and(|c| allow.iter().any(|a| a == c)))
+        .filter(|(_, _, country)| crate::placement::jurisdiction_allowed(allow, country.as_deref()))
         .map(|(pid, addr, _)| (pid, addr))
         .collect();
 
@@ -256,6 +256,72 @@ pub async fn file_health(
         "recoverable": recoverable,
         "single_failure_safe": margin >= PARITY_SHARDS,
         "at_risk": !recoverable || margin < PARITY_SHARDS,
+    })))
+}
+
+/// Placement map of a file: where each shard physically lives (this node or a
+/// peer), with the peer's latency / country / status — so the admin can SEE how
+/// data is distributed geographically and by latency.
+pub async fn file_placement(
+    State(st): State<AppState>,
+    Extension(user): Extension<P2pUser>,
+    Path(file_id): Path<String>,
+) -> Result<Json<Value>> {
+    let uid = user.id.to_string();
+    let (man, uid2, fid) = (st.manifest.clone(), uid.clone(), file_id.clone());
+    let (file, plan) = tokio::task::spawn_blocking(move || p2pnas_store::service::pull_plan(&man, &uid2, &fid))
+        .await
+        .map_err(join_err)??;
+
+    // peer_id → (rtt_ms, country, status) for labelling remote shards.
+    type PeerMeta = (String, Option<f64>, Option<String>, String);
+    let peers: Vec<PeerMeta> = sqlx::query_as("SELECT peer_id, rtt_ms, country, status FROM p2pnas.peers")
+        .fetch_all(&st.db)
+        .await
+        .unwrap_or_default();
+    let meta: std::collections::HashMap<String, (Option<f64>, Option<String>, String)> =
+        peers.into_iter().map(|(p, r, c, s)| (p, (r, c, s))).collect();
+
+    let mut by_location: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut chunks = Vec::with_capacity(plan.len());
+    for (chunk, shards) in &plan {
+        let mut shard_views = Vec::with_capacity(shards.len());
+        for s in shards {
+            *by_location.entry(s.location.clone()).or_default() += 1;
+            let view = if s.location == "local" {
+                json!({ "shard_index": s.shard_index, "kind": "local", "location": "local" })
+            } else {
+                let m = meta.get(&s.location);
+                json!({
+                    "shard_index": s.shard_index, "kind": "peer", "location": s.location,
+                    "rtt_ms": m.and_then(|x| x.0), "country": m.and_then(|x| x.1.clone()),
+                    "status": m.map(|x| x.2.clone()),
+                })
+            };
+            shard_views.push(view);
+        }
+        chunks.push(json!({ "idx": chunk.idx, "shards": shard_views }));
+    }
+
+    let locations: Vec<Value> = by_location
+        .iter()
+        .map(|(loc, count)| {
+            if loc == "local" {
+                json!({ "id": "local", "kind": "local", "count": count })
+            } else {
+                let m = meta.get(loc);
+                json!({
+                    "id": loc, "kind": "peer", "count": count,
+                    "rtt_ms": m.and_then(|x| x.0), "country": m.and_then(|x| x.1.clone()),
+                    "status": m.map(|x| x.2.clone()),
+                })
+            }
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "file_id": file.file_id, "path": file.path,
+        "chunks": chunks, "locations": locations,
     })))
 }
 

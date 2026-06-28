@@ -81,6 +81,21 @@ export interface FileHealth {
   at_risk: boolean
 }
 
+export interface PlacementLocation {
+  id: string
+  kind: 'local' | 'peer'
+  count: number
+  rtt_ms?: number | null
+  country?: string | null
+  status?: string | null
+}
+
+export interface FilePlacement {
+  file_id: string
+  path: string
+  locations: PlacementLocation[]
+}
+
 export const p2pnasApi = {
   status:    () => apiClient.get<NodeStatus>('/p2pnas/status').then(r => r.data),
   quotaMe:   () => apiClient.get<MyQuota>('/p2pnas/quota/me').then(r => r.data),
@@ -122,6 +137,8 @@ export const p2pnasApi = {
     apiClient.post('/p2pnas/admin/rebalance'),
   fileHealth: (fileId: string) =>
     apiClient.get<FileHealth>(`/p2pnas/files/${fileId}/health`).then(r => r.data),
+  filePlacement: (fileId: string) =>
+    apiClient.get<FilePlacement>(`/p2pnas/files/${fileId}/placement`).then(r => r.data),
 }
 
 /** Relative "il y a …" formatting for last_seen / event timestamps. */

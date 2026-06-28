@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react'
-import { HardDrive, Users, Save, Plus, ShieldCheck, RefreshCw, Trash2, Activity, AlertTriangle, Wifi, WifiOff, Gauge, Radar, ShieldAlert, CheckCircle2, FileSearch } from 'lucide-react'
+import { useEffect, useState, Fragment } from 'react'
+import { HardDrive, Users, Save, Plus, ShieldCheck, RefreshCw, Trash2, Activity, AlertTriangle, Wifi, WifiOff, Gauge, Radar, ShieldAlert, CheckCircle2, FileSearch, MapPin, HardDriveDownload } from 'lucide-react'
 import { useConfirm } from '@kubuno/sdk'
 import { ConfirmDialog } from '@ui'
 import {
   p2pnasApi, formatBytes, timeAgo,
   type NodeStatus, type QuotaRow, type PeerRow, type RepairReport, type EventRow,
-  type NodeMetrics, type FileHealth, type FileRow,
+  type NodeMetrics, type FileHealth, type FileRow, type FilePlacement,
 } from './api'
 
 const GIB = 1024 * 1024 * 1024
@@ -37,6 +37,7 @@ export default function P2pnasSettingsPage() {
   const [metrics, setMetrics] = useState<NodeMetrics | null>(null)
   const [files, setFiles] = useState<FileRow[]>([])
   const [health, setHealth] = useState<Record<string, FileHealth>>({})
+  const [placement, setPlacement] = useState<Record<string, FilePlacement>>({})
   const [msg, setMsg] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const { confirm, confirmState, handleConfirm, handleCancel } = useConfirm()
@@ -63,6 +64,20 @@ export default function P2pnasSettingsPage() {
       setHealth(prev => ({ ...prev, [f.file_id]: h }))
     } catch (e) {
       setErr(errMsg(e, 'Vérification impossible'))
+    }
+  }
+
+  async function togglePlacement(f: FileRow) {
+    if (placement[f.file_id]) {
+      setPlacement(prev => { const n = { ...prev }; delete n[f.file_id]; return n })
+      return
+    }
+    setErr(null)
+    try {
+      const p = await p2pnasApi.filePlacement(f.file_id)
+      setPlacement(prev => ({ ...prev, [f.file_id]: p }))
+    } catch (e) {
+      setErr(errMsg(e, 'Carte de placement indisponible'))
     }
   }
   useEffect(() => { void load() }, [])
@@ -225,18 +240,32 @@ export default function P2pnasSettingsPage() {
               <tbody>
                 {files.map(f => {
                   const h = health[f.file_id]
+                  const pl = placement[f.file_id]
                   return (
-                    <tr key={f.file_id} className="border-b border-border/60">
-                      <td className="py-1.5 truncate max-w-xs" title={f.path}>{f.path}</td>
-                      <td className="py-1.5 text-text-tertiary text-xs w-24">{formatBytes(f.size)}</td>
-                      <td className="py-1.5 w-56">{h ? <HealthBadge h={h} /> : <span className="text-text-tertiary text-xs">—</span>}</td>
-                      <td className="py-1.5 text-right">
-                        <button onClick={() => checkHealth(f)}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-surface-2 text-text-secondary hover:text-primary">
-                          <FileSearch className="w-3.5 h-3.5" /> Vérifier
-                        </button>
-                      </td>
-                    </tr>
+                    <Fragment key={f.file_id}>
+                      <tr className="border-b border-border/60">
+                        <td className="py-1.5 truncate max-w-xs" title={f.path}>{f.path}</td>
+                        <td className="py-1.5 text-text-tertiary text-xs w-24">{formatBytes(f.size)}</td>
+                        <td className="py-1.5 w-56">{h ? <HealthBadge h={h} /> : <span className="text-text-tertiary text-xs">—</span>}</td>
+                        <td className="py-1.5 text-right whitespace-nowrap">
+                          <button onClick={() => checkHealth(f)}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-surface-2 text-text-secondary hover:text-primary">
+                            <FileSearch className="w-3.5 h-3.5" /> Vérifier
+                          </button>
+                          <button onClick={() => togglePlacement(f)}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-surface-2 text-text-secondary hover:text-primary">
+                            <MapPin className="w-3.5 h-3.5" /> Carte
+                          </button>
+                        </td>
+                      </tr>
+                      {pl && (
+                        <tr className="border-b border-border/60">
+                          <td colSpan={4} className="py-2 pl-2">
+                            <PlacementMap pl={pl} />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   )
                 })}
               </tbody>
@@ -407,6 +436,44 @@ function HealthBadge({ h }: { h: FileHealth }) {
     return <span className="inline-flex items-center gap-1 text-amber-600 text-xs font-medium"><ShieldAlert className="w-3.5 h-3.5" /> Récupérable ({h.min_reachable}/{h.total_shards})</span>
   }
   return <span className="inline-flex items-center gap-1 text-green-600 text-xs font-medium"><CheckCircle2 className="w-3.5 h-3.5" /> Sûr ({h.min_reachable}/{h.total_shards})</span>
+}
+
+function flagOf(country: string | null | undefined): string {
+  if (!country || country.length !== 2) return '🌐'
+  // ISO country code → regional-indicator emoji flag.
+  return String.fromCodePoint(...[...country.toUpperCase()].map(c => 0x1f1e6 + c.charCodeAt(0) - 65))
+}
+
+function PlacementMap({ pl }: { pl: FilePlacement }) {
+  const total = pl.locations.reduce((n, l) => n + l.count, 0)
+  const sorted = [...pl.locations].sort((a, b) => (a.kind === 'local' ? -1 : b.kind === 'local' ? 1 : (a.rtt_ms ?? 1e9) - (b.rtt_ms ?? 1e9)))
+  return (
+    <div className="space-y-1.5">
+      {/* proportional bar */}
+      <div className="flex h-2.5 rounded-full overflow-hidden bg-surface-2">
+        {sorted.map(l => (
+          <div key={l.id} title={`${l.id} — ${l.count} fragment(s)`}
+            className={l.kind === 'local' ? 'bg-primary' : l.status === 'down' ? 'bg-red-400' : 'bg-green-400'}
+            style={{ width: `${(l.count / total) * 100}%` }} />
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+        {sorted.map(l => (
+          <span key={l.id} className="inline-flex items-center gap-1.5">
+            {l.kind === 'local'
+              ? <HardDriveDownload className="w-3.5 h-3.5 text-primary" />
+              : <span>{flagOf(l.country)}</span>}
+            <span className="text-text-secondary">
+              {l.kind === 'local' ? 'Ce nœud' : `${l.id.slice(0, 8)}…`}
+            </span>
+            <span className="font-medium text-text-primary">{l.count}</span>
+            {l.kind === 'peer' && l.rtt_ms != null && <span className="text-text-tertiary">· {Math.round(l.rtt_ms)} ms</span>}
+            {l.kind === 'peer' && l.status === 'down' && <span className="text-red-500">· hors-ligne</span>}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 function LatencyBadge({ ms }: { ms: number }) {

@@ -35,6 +35,7 @@ pub fn build(state: AppState) -> Router {
         .route("/files", get(files::list).post(files::upload))
         .route("/files/:id", get(files::download).delete(files::delete))
         .route("/files/:id/health", get(files::file_health))
+        .route("/files/:id/placement", get(files::file_placement))
         // Folder-aware "My Cloud" mount (path-based, parity with Drive).
         .route("/browse", get(files::browse))
         .route("/download", get(files::download_path))

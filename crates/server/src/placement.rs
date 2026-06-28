@@ -54,9 +54,27 @@ pub fn plan_placement(peer_rtt: &[f64], total: usize, parity: usize) -> Vec<Plac
     out
 }
 
+/// Jurisdiction check: with an empty allow-list everything passes; otherwise a
+/// peer must have a known country that is on the list (unknown → rejected).
+pub fn jurisdiction_allowed(allow: &[String], country: Option<&str>) -> bool {
+    allow.is_empty() || country.is_some_and(|c| allow.iter().any(|a| a == c))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jurisdiction_filter() {
+        // No allow-list → anything passes (even unknown country).
+        assert!(jurisdiction_allowed(&[], None));
+        assert!(jurisdiction_allowed(&[], Some("US")));
+        let allow = vec!["FR".to_string(), "BE".to_string()];
+        assert!(jurisdiction_allowed(&allow, Some("FR")));
+        assert!(!jurisdiction_allowed(&allow, Some("US")));
+        // Unknown country is rejected when a list is set (conservative).
+        assert!(!jurisdiction_allowed(&allow, None));
+    }
 
     #[test]
     fn respects_cap_and_prefers_near() {
