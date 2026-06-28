@@ -100,7 +100,9 @@ pub fn push(
                 c.recovery[i - DATA_SHARDS].clone()
             };
             store.write(&frag, &bytes)?;
-            manifest::insert_shard(&tx, &ShardRow { fragment_id: frag, chunk_id: cid.clone(), shard_index: i as i64 })?;
+            manifest::insert_shard(&tx, &ShardRow {
+                fragment_id: frag, chunk_id: cid.clone(), shard_index: i as i64, location: "local".into(),
+            })?;
         }
     }
 
@@ -145,6 +147,51 @@ pub fn delete(manifest: &Manifest, store: &ChunkStore, user_id: &str, file_id: &
         store.delete(&frag)?;
     }
     Ok(file)
+}
+
+/// Metadata the async layer needs to fetch a file's shards (local or remote).
+pub type ChunkShards = (ChunkRow, Vec<ShardRow>);
+
+/// Read the file + per-chunk shard placement (without fetching shard bytes).
+pub fn pull_plan(manifest: &Manifest, user_id: &str, file_id: &str) -> Result<(FileRow, Vec<ChunkShards>)> {
+    let conn = manifest.connect()?;
+    let file = manifest::get_file(&conn, user_id, file_id)?.ok_or(StoreError::NotFound)?;
+    let chunks = manifest::get_chunks(&conn, file_id)?;
+    let mut out = Vec::with_capacity(chunks.len());
+    for c in chunks {
+        let shards = manifest::get_shards(&conn, &c.chunk_id)?;
+        out.push((c, shards));
+    }
+    Ok((file, out))
+}
+
+/// Reconstruct + decrypt a file from already-fetched shards. `present[i]` per
+/// chunk is the bytes of shard `i` (or None if it couldn't be fetched); RS needs
+/// at least `DATA_SHARDS` of the 14.
+pub fn reassemble(
+    id: &NodeIdentity,
+    file_id: &str,
+    chunks: Vec<(ChunkRow, Vec<Option<Vec<u8>>>)>,
+) -> Result<Vec<u8>> {
+    let sealer = id.data_key.file_subkey(file_id.as_bytes()).sealer()?;
+    let mut out = Vec::new();
+    for (c, present) in chunks {
+        let mut cipher = erasure::reconstruct(&present, c.cipher_len as usize)?;
+        let plain = sealer.open(c.idx as u64, &mut cipher)?;
+        out.extend_from_slice(&restore(plain, c.is_compressed)?);
+    }
+    Ok(out)
+}
+
+/// Record a shard's new home ('local' or a peer_id) after distribution.
+pub fn set_location(manifest: &Manifest, fragment_id: &str, location: &str) -> Result<()> {
+    let conn = manifest.connect()?;
+    manifest::set_shard_location(&conn, fragment_id, location)
+}
+
+/// Read a locally-held shard's bytes (None if absent).
+pub fn read_local(store: &ChunkStore, fragment_id: &str) -> Option<Vec<u8>> {
+    store.read(fragment_id).ok()
 }
 
 /// Pad a (possibly short, last) data-shard slice to the uniform shard length so

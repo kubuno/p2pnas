@@ -34,7 +34,9 @@ CREATE TABLE IF NOT EXISTS chunks (
 CREATE TABLE IF NOT EXISTS shards (
     fragment_id TEXT PRIMARY KEY,
     chunk_id    TEXT NOT NULL REFERENCES chunks(chunk_id) ON DELETE CASCADE,
-    shard_index INTEGER NOT NULL
+    shard_index INTEGER NOT NULL,
+    -- Where this shard lives: 'local' (this node's store) or a peer_id (hosted remotely).
+    location    TEXT NOT NULL DEFAULT 'local'
 );
 CREATE INDEX IF NOT EXISTS chunks_file_idx ON chunks(file_id);
 CREATE INDEX IF NOT EXISTS shards_chunk_idx ON shards(chunk_id);
@@ -68,6 +70,8 @@ pub struct ShardRow {
     pub fragment_id: String,
     pub chunk_id:    String,
     pub shard_index: i64,
+    /// 'local' or a peer_id.
+    pub location:    String,
 }
 
 /// Handle to the manifest DB (path + SQLCipher key). Open a fresh connection per
@@ -92,6 +96,8 @@ impl Manifest {
         // Raw key form `x'HEX'` (64 hex chars = 32-byte key) — no KDF over our key.
         conn.execute_batch(&format!("PRAGMA key = \"x'{}'\";", self.key_hex))?;
         conn.execute_batch(SCHEMA)?;
+        // Additive migration for manifests created before the `location` column.
+        let _ = conn.execute_batch("ALTER TABLE shards ADD COLUMN location TEXT NOT NULL DEFAULT 'local';");
         Ok(conn)
     }
 }
@@ -116,8 +122,17 @@ pub fn insert_chunk(conn: &Connection, c: &ChunkRow) -> Result<()> {
 
 pub fn insert_shard(conn: &Connection, s: &ShardRow) -> Result<()> {
     conn.execute(
-        "INSERT INTO shards (fragment_id, chunk_id, shard_index) VALUES (?1, ?2, ?3)",
-        params![s.fragment_id, s.chunk_id, s.shard_index],
+        "INSERT INTO shards (fragment_id, chunk_id, shard_index, location) VALUES (?1, ?2, ?3, ?4)",
+        params![s.fragment_id, s.chunk_id, s.shard_index, s.location],
+    )?;
+    Ok(())
+}
+
+/// Record where a shard now lives ('local' or a peer_id) after (re)placement.
+pub fn set_shard_location(conn: &Connection, fragment_id: &str, location: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE shards SET location = ?2 WHERE fragment_id = ?1",
+        params![fragment_id, location],
     )?;
     Ok(())
 }
@@ -174,11 +189,11 @@ pub fn get_chunks(conn: &Connection, file_id: &str) -> Result<Vec<ChunkRow>> {
 
 pub fn get_shards(conn: &Connection, chunk_id: &str) -> Result<Vec<ShardRow>> {
     let mut stmt = conn.prepare(
-        "SELECT fragment_id, chunk_id, shard_index FROM shards WHERE chunk_id = ?1 ORDER BY shard_index",
+        "SELECT fragment_id, chunk_id, shard_index, location FROM shards WHERE chunk_id = ?1 ORDER BY shard_index",
     )?;
     let rows = stmt
         .query_map(params![chunk_id], |r| {
-            Ok(ShardRow { fragment_id: r.get(0)?, chunk_id: r.get(1)?, shard_index: r.get(2)? })
+            Ok(ShardRow { fragment_id: r.get(0)?, chunk_id: r.get(1)?, shard_index: r.get(2)?, location: r.get(3)? })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)

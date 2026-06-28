@@ -8,6 +8,9 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use p2pnas_core::erasure::TOTAL_SHARDS;
+use p2pnas_p2p::P2pMessage;
+
 use crate::{
     errors::{P2pError, Result},
     middleware::P2pUser,
@@ -69,7 +72,61 @@ pub async fn upload(
         .execute(&st.db)
         .await?;
 
+    // Best-effort: spread the shards across peers (round-robin over [self] + peers).
+    distribute_shards(&st, &user.id.to_string(), &res.file_id).await;
+
     Ok(Json(json!({ "file_id": res.file_id, "path": q.path, "size": res.size })))
+}
+
+/// Move each shard to a peer (round-robin over `[self] + peers`); shards that
+/// can't be placed remotely stay local. No peers → everything stays local.
+async fn distribute_shards(st: &AppState, user_id: &str, file_id: &str) {
+    let peers: Vec<(String, String)> =
+        sqlx::query_as("SELECT peer_id, addr FROM p2pnas.peers WHERE peer_id <> $1")
+            .bind(&st.identity.peer_id)
+            .fetch_all(&st.db)
+            .await
+            .unwrap_or_default();
+    if peers.is_empty() {
+        return;
+    }
+
+    let (man, uid, fid) = (st.manifest.clone(), user_id.to_string(), file_id.to_string());
+    let plan = match tokio::task::spawn_blocking(move || p2pnas_store::service::pull_plan(&man, &uid, &fid)).await {
+        Ok(Ok((_, chunks))) => chunks,
+        _ => return,
+    };
+
+    let mut slot = 0usize;
+    for (_chunk, shards) in plan {
+        for s in shards {
+            let target = slot % (peers.len() + 1);
+            slot += 1;
+            if target == 0 {
+                continue; // keep on self
+            }
+            let (peer_id, addr) = peers[target - 1].clone();
+
+            let store = st.store.clone();
+            let frag = s.fragment_id.clone();
+            let bytes = match tokio::task::spawn_blocking(move || p2pnas_store::service::read_local(&store, &frag)).await {
+                Ok(Some(b)) => b,
+                _ => continue,
+            };
+
+            let msg = P2pMessage::StoreShard {
+                fragment_id: s.fragment_id.clone(),
+                owner_peer_id: st.identity.peer_id.clone(),
+                data: bytes,
+            };
+            if let Ok(P2pMessage::Ack { .. }) = p2pnas_p2p::request(&addr, &msg).await {
+                let (man, frag, pid) = (st.manifest.clone(), s.fragment_id.clone(), peer_id.clone());
+                let _ = tokio::task::spawn_blocking(move || p2pnas_store::service::set_location(&man, &frag, &pid)).await;
+                let (store, frag2) = (st.store.clone(), s.fragment_id.clone());
+                let _ = tokio::task::spawn_blocking(move || store.delete(&frag2)).await;
+            }
+        }
+    }
 }
 
 /// List the user's files.
@@ -82,19 +139,58 @@ pub async fn list(State(st): State<AppState>, Extension(user): Extension<P2pUser
     Ok(Json(json!({ "files": files })))
 }
 
-/// Download (reconstruct + decrypt) a file by id.
+/// Download a file: gather its shards (local + peers), reconstruct, decrypt.
 pub async fn download(
     State(st): State<AppState>,
     Extension(user): Extension<P2pUser>,
     Path(file_id): Path<String>,
 ) -> Result<Response> {
-    let (id, man, store) = (st.identity.clone(), st.manifest.clone(), st.store.clone());
     let uid = user.id.to_string();
-    let bytes = tokio::task::spawn_blocking(move || {
-        p2pnas_store::service::pull(&id, &man, &store, &uid, &file_id)
-    })
-    .await
-    .map_err(join_err)??;
+
+    // 1. Read the placement plan (which shard lives where).
+    let (man, uid2, fid) = (st.manifest.clone(), uid.clone(), file_id.clone());
+    let (_file, plan) = tokio::task::spawn_blocking(move || p2pnas_store::service::pull_plan(&man, &uid2, &fid))
+        .await
+        .map_err(join_err)??;
+
+    // 2. peer_id → addr lookup for remote fetches.
+    let peers: Vec<(String, String)> = sqlx::query_as("SELECT peer_id, addr FROM p2pnas.peers")
+        .fetch_all(&st.db)
+        .await
+        .unwrap_or_default();
+
+    // 3. Gather every shard (local read or P2P GetShard); RS tolerates losses.
+    let mut chunks_fetched = Vec::with_capacity(plan.len());
+    for (chunk, shards) in plan {
+        let mut present: Vec<Option<Vec<u8>>> = vec![None; TOTAL_SHARDS];
+        for s in shards {
+            let bytes = if s.location == "local" {
+                let (store, frag) = (st.store.clone(), s.fragment_id.clone());
+                tokio::task::spawn_blocking(move || p2pnas_store::service::read_local(&store, &frag))
+                    .await
+                    .ok()
+                    .flatten()
+            } else if let Some((_, addr)) = peers.iter().find(|(pid, _)| pid == &s.location) {
+                match p2pnas_p2p::request(addr, &P2pMessage::GetShard { fragment_id: s.fragment_id.clone() }).await {
+                    Ok(P2pMessage::ShardData { data, .. }) => Some(data),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            if let Some(cell) = present.get_mut(s.shard_index as usize) {
+                *cell = bytes;
+            }
+        }
+        chunks_fetched.push((chunk, present));
+    }
+
+    // 4. Reconstruct + decrypt.
+    let (id, fid2) = (st.identity.clone(), file_id.clone());
+    let bytes = tokio::task::spawn_blocking(move || p2pnas_store::service::reassemble(&id, &fid2, chunks_fetched))
+        .await
+        .map_err(join_err)??;
+
     Ok(([(header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response())
 }
 
