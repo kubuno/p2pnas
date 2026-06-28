@@ -1,6 +1,6 @@
 import { useEffect, useState, Fragment } from 'react'
 import { HardDrive, Users, Save, Plus, ShieldCheck, RefreshCw, Trash2, Activity, AlertTriangle, Wifi, WifiOff, Gauge, Radar, ShieldAlert, CheckCircle2, FileSearch, MapPin, HardDriveDownload } from 'lucide-react'
-import { useConfirm } from '@kubuno/sdk'
+import { useConfirm, ModuleServiceRegistry } from '@kubuno/sdk'
 import { ConfirmDialog } from '@ui'
 import {
   p2pnasApi, formatBytes, timeAgo,
@@ -41,6 +41,8 @@ export default function P2pnasSettingsPage() {
   const [msg, setMsg] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const { confirm, confirmState, handleConfirm, handleCancel } = useConfirm()
+  // Geo features (peer country / jurisdiction) are provided by the maps module.
+  const geoAvailable = !!ModuleServiceRegistry.get('maps', 'geoip')
 
   async function load() {
     const s = await p2pnasApi.status()
@@ -236,6 +238,15 @@ export default function P2pnasSettingsPage() {
               <ShieldAlert className="w-5 h-5 text-primary" />
               <h2 className="font-semibold text-text-primary">Durabilité des fichiers</h2>
             </div>
+            {!geoAvailable && (
+              <div className="mb-3 flex items-start gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
+                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                <span>
+                  La localisation géographique des pairs (pays, carte) nécessite le module <strong>maps</strong>,
+                  qui n’est pas activé. Les fonctions géo restent indisponibles tant que maps n’est pas installé.
+                </span>
+              </div>
+            )}
             <table className="w-full text-sm">
               <tbody>
                 {files.map(f => {
