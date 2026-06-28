@@ -158,17 +158,43 @@ pub async fn remove_peer(
 
 /// List trusted peers (admin only).
 pub async fn list_peers(State(st): State<AppState>) -> Result<Json<Value>> {
-    let rows: Vec<(String, String, f64, i64)> = sqlx::query_as(
-        "SELECT peer_id, addr, reliability_score, contributed_bytes FROM p2pnas.peers ORDER BY reliability_score DESC",
+    type Row = (String, String, f64, i64, Option<chrono::DateTime<chrono::Utc>>);
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT peer_id, addr, reliability_score, contributed_bytes, last_seen
+         FROM p2pnas.peers ORDER BY reliability_score DESC, peer_id",
     )
     .fetch_all(&st.db)
     .await?;
 
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(peer_id, addr, score, contributed)| {
-            json!({ "peer_id": peer_id, "addr": addr, "reliability_score": score, "contributed_bytes": contributed })
+        .map(|(peer_id, addr, score, contributed, last_seen)| {
+            json!({
+                "peer_id": peer_id,
+                "addr": addr,
+                "reliability_score": score,
+                "contributed_bytes": contributed,
+                "last_seen": last_seen.map(|t| t.to_rfc3339()),
+            })
         })
         .collect();
     Ok(Json(json!({ "peers": items })))
+}
+
+/// Recent control-plane events (admin only): repair / data-loss-risk notices.
+pub async fn list_events(State(st): State<AppState>) -> Result<Json<Value>> {
+    type Row = (i64, String, Value, chrono::DateTime<chrono::Utc>);
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT id, kind, payload, created_at FROM p2pnas.events ORDER BY id DESC LIMIT 50",
+    )
+    .fetch_all(&st.db)
+    .await?;
+
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, kind, payload, created_at)| {
+            json!({ "id": id, "kind": kind, "payload": payload, "created_at": created_at.to_rfc3339() })
+        })
+        .collect();
+    Ok(Json(json!({ "events": items })))
 }

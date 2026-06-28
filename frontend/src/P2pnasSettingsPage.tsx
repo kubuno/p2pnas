@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react'
-import { HardDrive, Users, Save, Plus } from 'lucide-react'
-import { p2pnasApi, formatBytes, type NodeStatus, type QuotaRow, type PeerRow } from './api'
+import { HardDrive, Users, Save, Plus, ShieldCheck, RefreshCw, Trash2, Activity, AlertTriangle, Wifi, WifiOff } from 'lucide-react'
+import { useConfirm } from '@kubuno/sdk'
+import { ConfirmDialog } from '@ui'
+import {
+  p2pnasApi, formatBytes, timeAgo,
+  type NodeStatus, type QuotaRow, type PeerRow, type RepairReport, type EventRow,
+} from './api'
 
 const GIB = 1024 * 1024 * 1024
 const toBytes = (gib: string) => Math.round((parseFloat(gib) || 0) * GIB)
@@ -10,26 +15,37 @@ function errMsg(e: unknown, fallback: string): string {
   return (e as { response?: { data?: { error?: string } } })?.response?.data?.error || fallback
 }
 
+/** A peer is considered live if it answered a probe within the last ~3 min. */
+function isLive(p: PeerRow): boolean {
+  if (!p.last_seen) return false
+  return Date.now() - new Date(p.last_seen).getTime() < 3 * 60 * 1000
+}
+
 export default function P2pnasSettingsPage() {
   const [status, setStatus] = useState<NodeStatus | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
   const [quotas, setQuotas] = useState<QuotaRow[]>([])
   const [peers, setPeers] = useState<PeerRow[]>([])
+  const [events, setEvents] = useState<EventRow[]>([])
   const [contrib, setContrib] = useState('')
   const [newUser, setNewUser] = useState('')
   const [newQuota, setNewQuota] = useState('')
+  const [newPeer, setNewPeer] = useState('')
+  const [repair, setRepair] = useState<RepairReport | null>(null)
+  const [repairing, setRepairing] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const { confirm, confirmState, handleConfirm, handleCancel } = useConfirm()
 
   async function load() {
     const s = await p2pnasApi.status()
     setStatus(s)
     setContrib(toGib(s.node.contributed_bytes))
     try {
-      const [q, p] = await Promise.all([p2pnasApi.listQuotas(), p2pnasApi.listPeers()])
-      setQuotas(q)
-      setPeers(p)
-      setIsAdmin(true)
+      const [q, p, ev] = await Promise.all([
+        p2pnasApi.listQuotas(), p2pnasApi.listPeers(), p2pnasApi.listEvents(),
+      ])
+      setQuotas(q); setPeers(p); setEvents(ev); setIsAdmin(true)
     } catch {
       setIsAdmin(false)
     }
@@ -39,6 +55,32 @@ export default function P2pnasSettingsPage() {
   async function run(fn: () => Promise<unknown>, ok: string) {
     setErr(null); setMsg(null)
     try { await fn(); setMsg(ok); await load() } catch (e) { setErr(errMsg(e, 'Échec')) }
+  }
+
+  async function doRepair() {
+    setErr(null); setMsg(null); setRepairing(true)
+    try {
+      const r = await p2pnasApi.runRepair()
+      setRepair(r)
+      setMsg(r.shards_replaced > 0
+        ? `Réparation : ${r.shards_replaced} fragment(s) re-répliqué(s)`
+        : 'Réparation : tout est sain, rien à faire')
+      await load()
+    } catch (e) {
+      setErr(errMsg(e, 'Échec de la réparation'))
+    } finally {
+      setRepairing(false)
+    }
+  }
+
+  async function removePeer(p: PeerRow) {
+    const ok = await confirm({
+      title: 'Oublier ce pair ?',
+      message: `Les fragments hébergés chez ${p.peer_id.slice(0, 12)}… seront considérés comme perdus et re-répliqués à la prochaine réparation.`,
+      variant: 'danger',
+      confirmLabel: 'Oublier',
+    })
+    if (ok) await run(() => p2pnasApi.removePeer(p.peer_id), 'Pair oublié')
   }
 
   return (
@@ -85,6 +127,110 @@ export default function P2pnasSettingsPage() {
           )}
         </section>
 
+        {/* ── Admin: résilience & réparation ──────────────────────────── */}
+        {isAdmin && (
+          <section className="bg-surface-0 rounded-lg border border-border p-5">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-primary" />
+                <h2 className="font-semibold text-text-primary">Résilience & réparation</h2>
+              </div>
+              <button
+                onClick={doRepair}
+                disabled={repairing}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-primary text-white text-sm hover:bg-primary-hover disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${repairing ? 'animate-spin' : ''}`} />
+                {repairing ? 'Réparation…' : 'Lancer une réparation'}
+              </button>
+            </div>
+            <p className="text-sm text-text-tertiary mb-3">
+              Vérifie chaque fichier et re-réplique les fragments dont l’hôte est devenu injoignable,
+              tant qu’il reste assez de fragments pour reconstruire (≥ {status?.erasure.data_shards ?? 10} sur {(status?.erasure.data_shards ?? 10) + (status?.erasure.parity_shards ?? 4)}).
+            </p>
+            {repair && (
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-sm">
+                <Stat label="Fichiers" value={String(repair.files_scanned)} />
+                <Stat label="Chunks sains" value={String(repair.chunks_healthy)} />
+                <Stat label="Réparés" value={String(repair.chunks_repaired)} />
+                <Stat label="Fragments re-répliqués" value={String(repair.shards_replaced)} />
+                <Stat label="Pairs joignables" value={`${repair.peers_reachable}/${repair.peers_total}`} />
+                <Stat
+                  label="Irrécupérables"
+                  value={String(repair.chunks_unrepairable)}
+                  danger={repair.chunks_unrepairable > 0}
+                />
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* ── Admin: peers ────────────────────────────────────────────── */}
+        {isAdmin && (
+          <section className="bg-surface-0 rounded-lg border border-border p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <Users className="w-5 h-5 text-primary" />
+              <h2 className="font-semibold text-text-primary">Pairs de confiance</h2>
+              <span className="text-xs text-text-tertiary ml-1">
+                ({peers.filter(isLive).length} en ligne / {peers.length})
+              </span>
+            </div>
+            {peers.length === 0 ? (
+              <p className="text-sm text-text-tertiary mb-3">
+                Aucun pair. Ajoutez l’adresse <code>ip:port</code> du listener P2P d’une connaissance pour
+                répartir vos fragments et gagner en résilience.
+              </p>
+            ) : (
+              <table className="w-full text-sm mb-3">
+                <thead><tr className="text-left text-xs text-text-tertiary border-b border-border">
+                  <th className="py-1.5 font-medium">Pair</th><th className="py-1.5 font-medium">Adresse</th>
+                  <th className="py-1.5 font-medium">État</th>
+                  <th className="py-1.5 font-medium">Fiabilité</th><th className="py-1.5 font-medium">Vu</th>
+                  <th className="py-1.5 font-medium"></th>
+                </tr></thead>
+                <tbody>
+                  {peers.map(p => {
+                    const live = isLive(p)
+                    return (
+                      <tr key={p.peer_id} className="border-b border-border/60">
+                        <td className="py-1.5 font-mono text-xs" title={p.peer_id}>{p.peer_id.slice(0, 12)}…</td>
+                        <td className="py-1.5">{p.addr}</td>
+                        <td className="py-1.5">
+                          {live
+                            ? <span className="inline-flex items-center gap-1 text-green-600"><Wifi className="w-3.5 h-3.5" /> en ligne</span>
+                            : <span className="inline-flex items-center gap-1 text-text-tertiary"><WifiOff className="w-3.5 h-3.5" /> hors ligne</span>}
+                        </td>
+                        <td className="py-1.5"><ReliabilityBadge score={p.reliability_score} /></td>
+                        <td className="py-1.5 text-text-tertiary text-xs">{timeAgo(p.last_seen)}</td>
+                        <td className="py-1.5 text-right">
+                          <button onClick={() => removePeer(p)} title="Oublier ce pair"
+                            className="p-1 rounded hover:bg-surface-2 text-text-tertiary hover:text-red-600">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )}
+            <div className="flex items-end gap-2 pt-1">
+              <label className="text-sm flex-1">
+                <div className="text-text-secondary mb-1">Adresse du pair (ip:port)</div>
+                <input value={newPeer} onChange={e => setNewPeer(e.target.value)} placeholder="203.0.113.5:7474"
+                  className="w-full px-2.5 py-1.5 rounded border border-border bg-surface-0 text-text-primary font-mono text-xs" />
+              </label>
+              <button
+                onClick={() => run(() => p2pnasApi.addPeer(newPeer.trim()), 'Pair ajouté').then(() => setNewPeer(''))}
+                disabled={!newPeer.trim()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-primary text-white text-sm hover:bg-primary-hover disabled:opacity-50"
+              >
+                <Plus className="w-4 h-4" /> Ajouter
+              </button>
+            </div>
+          </section>
+        )}
+
         {/* ── Admin: quotas ───────────────────────────────────────────── */}
         {isAdmin && (
           <section className="bg-surface-0 rounded-lg border border-border p-5">
@@ -117,47 +263,55 @@ export default function P2pnasSettingsPage() {
           </section>
         )}
 
-        {/* ── Admin: peers ────────────────────────────────────────────── */}
-        {isAdmin && (
+        {/* ── Admin: events ───────────────────────────────────────────── */}
+        {isAdmin && events.length > 0 && (
           <section className="bg-surface-0 rounded-lg border border-border p-5">
             <div className="flex items-center gap-2 mb-3">
-              <Users className="w-5 h-5 text-primary" />
-              <h2 className="font-semibold text-text-primary">Pairs de confiance</h2>
+              <Activity className="w-5 h-5 text-primary" />
+              <h2 className="font-semibold text-text-primary">Journal d’événements</h2>
             </div>
-            {peers.length === 0 ? (
-              <p className="text-sm text-text-tertiary">Aucun pair encore. Le réseau de résilience s’ajoutera en phase 3.</p>
-            ) : (
-              <table className="w-full text-sm">
-                <thead><tr className="text-left text-xs text-text-tertiary border-b border-border">
-                  <th className="py-1.5 font-medium">Pair</th><th className="py-1.5 font-medium">Adresse</th>
-                  <th className="py-1.5 font-medium">Fiabilité</th><th className="py-1.5 font-medium">Contribué</th>
-                </tr></thead>
-                <tbody>
-                  {peers.map(p => (
-                    <tr key={p.peer_id} className="border-b border-border/60">
-                      <td className="py-1.5 font-mono text-xs">{p.peer_id.slice(0, 12)}…</td>
-                      <td className="py-1.5">{p.addr}</td>
-                      <td className="py-1.5">{p.reliability_score.toFixed(0)}%</td>
-                      <td className="py-1.5">{formatBytes(p.contributed_bytes)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+            <ul className="space-y-1.5 text-sm">
+              {events.map(ev => (
+                <li key={ev.id} className="flex items-start gap-2">
+                  {ev.kind === 'chunk_unrepairable'
+                    ? <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                    : <Activity className="w-4 h-4 text-text-tertiary mt-0.5 shrink-0" />}
+                  <div className="min-w-0">
+                    <span className="text-text-primary">{eventLabel(ev)}</span>
+                    <span className="text-text-tertiary text-xs ml-2">{timeAgo(ev.created_at)}</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
           </section>
         )}
       </div>
+
+      {confirmState && <ConfirmDialog {...confirmState} onConfirm={handleConfirm} onCancel={handleCancel} />}
     </div>
   )
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function eventLabel(ev: EventRow): string {
+  if (ev.kind === 'chunk_unrepairable') {
+    const p = ev.payload as { reachable_shards?: number; needed?: number; file_id?: string }
+    return `Chunk irrécupérable (${p.reachable_shards ?? '?'}/${p.needed ?? '?'} fragments joignables) — risque de perte de données`
+  }
+  return ev.kind
+}
+
+function Stat({ label, value, danger }: { label: string; value: string; danger?: boolean }) {
   return (
-    <div className="rounded-md bg-surface-1 px-3 py-2">
+    <div className={`rounded-md px-3 py-2 ${danger ? 'bg-red-50' : 'bg-surface-1'}`}>
       <div className="text-xs text-text-tertiary">{label}</div>
-      <div className="text-text-primary font-medium">{value}</div>
+      <div className={`font-medium ${danger ? 'text-red-600' : 'text-text-primary'}`}>{value}</div>
     </div>
   )
+}
+
+function ReliabilityBadge({ score }: { score: number }) {
+  const color = score >= 80 ? 'text-green-600' : score >= 40 ? 'text-amber-600' : 'text-red-600'
+  return <span className={`font-medium ${color}`}>{score.toFixed(0)}%</span>
 }
 
 function QuotaEditor({ row, onSave }: { row: QuotaRow; onSave: (gib: string) => void }) {

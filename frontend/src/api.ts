@@ -35,6 +35,25 @@ export interface PeerRow {
   addr: string
   reliability_score: number
   contributed_bytes: number
+  last_seen: string | null
+}
+
+export interface RepairReport {
+  files_scanned: number
+  chunks_scanned: number
+  chunks_healthy: number
+  chunks_repaired: number
+  shards_replaced: number
+  chunks_unrepairable: number
+  peers_total: number
+  peers_reachable: number
+}
+
+export interface EventRow {
+  id: number
+  kind: string
+  payload: Record<string, unknown>
+  created_at: string
 }
 
 export const p2pnasApi = {
@@ -64,6 +83,24 @@ export const p2pnasApi = {
     apiClient.post('/p2pnas/admin/contribution', { bytes }),
   listPeers: () =>
     apiClient.get<{ peers: PeerRow[] }>('/p2pnas/admin/peers').then(r => r.data.peers),
+  addPeer: (addr: string) =>
+    apiClient.post('/p2pnas/admin/peers', { addr }),
+  removePeer: (peerId: string) =>
+    apiClient.delete(`/p2pnas/admin/peers/${encodeURIComponent(peerId)}`),
+  runRepair: () =>
+    apiClient.post<{ repair: RepairReport }>('/p2pnas/admin/repair').then(r => r.data.repair),
+  listEvents: () =>
+    apiClient.get<{ events: EventRow[] }>('/p2pnas/admin/events').then(r => r.data.events),
+}
+
+/** Relative "il y a …" formatting for last_seen / event timestamps. */
+export function timeAgo(iso: string | null): string {
+  if (!iso) return 'jamais'
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000)
+  if (s < 60) return "à l'instant"
+  if (s < 3600) return `il y a ${Math.floor(s / 60)} min`
+  if (s < 86400) return `il y a ${Math.floor(s / 3600)} h`
+  return `il y a ${Math.floor(s / 86400)} j`
 }
 
 export function formatBytes(n: number): string {
