@@ -231,31 +231,28 @@ async fn main() -> Result<()> {
         let (api_port, p2p_port) = (settings.server.port, settings.p2p.port);
         let bind_addr = format!("0.0.0.0:{}", settings.discovery.dht_port);
         let bootstrap = settings.discovery.dht_bootstrap.clone();
+        let state_file = std::path::PathBuf::from(&settings.storage.data_dir).join("dht_nodes.json");
         tokio::spawn(async move {
-            kubuno_p2pnas::discovery::dht::run(db, id, api_port, p2p_port, bind_addr, bootstrap).await;
+            kubuno_p2pnas::discovery::dht::run(db, id, api_port, p2p_port, bind_addr, bootstrap, state_file).await;
         });
     }
 
-    // Periodic self-healing: probe peer liveness (refreshing reliability scores)
-    // and re-replicate any shard whose host has gone unreachable. Admin can also
-    // trigger a pass on demand via POST /admin/repair.
+    // Background job worker: processes repair jobs claimed with SKIP LOCKED.
     {
         let st = state.clone();
+        tokio::spawn(async move { kubuno_p2pnas::jobs::worker(st).await });
+    }
+
+    // Periodic self-healing: enqueue a repair job (the worker runs it). Admin can
+    // also trigger a pass on demand via POST /admin/repair.
+    {
+        let db = state.db.clone();
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(600));
             tick.tick().await; // consume the immediate first tick
             loop {
                 tick.tick().await;
-                let r = kubuno_p2pnas::repair::repair_all(&st).await;
-                if r.shards_replaced > 0 || r.chunks_unrepairable > 0 {
-                    tracing::info!(
-                        files = r.files_scanned,
-                        repaired = r.chunks_repaired,
-                        replaced = r.shards_replaced,
-                        unrepairable = r.chunks_unrepairable,
-                        "repair pass complete"
-                    );
-                }
+                kubuno_p2pnas::jobs::enqueue(&db, "repair", serde_json::json!({})).await;
             }
         });
     }

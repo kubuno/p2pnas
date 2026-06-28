@@ -110,6 +110,15 @@ impl RoutingTable {
     }
 }
 
+/// A routing-table entry persisted across restarts (for faster overlay rejoin).
+#[derive(Serialize, Deserialize)]
+pub struct PersistNode {
+    pub id:       String,
+    pub ip:       String,
+    pub udp_port: u16,
+    pub p2p_port: u16,
+}
+
 #[derive(Serialize, Deserialize)]
 struct NodeRec {
     id:       String,
@@ -154,6 +163,34 @@ impl DhtNode {
             p2p_port,
             table: Arc::new(Mutex::new(RoutingTable::new(self_id))),
         }))
+    }
+
+    /// A persistable view of a known node (so the routing table survives restart).
+    pub async fn export_nodes(&self) -> Vec<PersistNode> {
+        self.table
+            .lock()
+            .await
+            .all()
+            .into_iter()
+            .map(|n| PersistNode {
+                id:       hex(&n.id),
+                ip:       n.udp.ip().to_string(),
+                udp_port: n.udp.port(),
+                p2p_port: n.p2p_port,
+            })
+            .collect()
+    }
+
+    /// Seed the routing table from a previously exported snapshot.
+    pub async fn import_nodes(&self, nodes: Vec<PersistNode>) {
+        let mut table = self.table.lock().await;
+        for r in nodes {
+            let (Some(id), Ok(ip)) = (unhex(&r.id), r.ip.parse()) else { continue };
+            if id == self.self_id {
+                continue;
+            }
+            table.add(Node { id, udp: SocketAddr::new(ip, r.udp_port), p2p_port: r.p2p_port });
+        }
     }
 
     /// TCP P2P addresses (`ip:p2p_port`) of every node we currently know — the

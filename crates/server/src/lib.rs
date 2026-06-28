@@ -2,6 +2,7 @@ pub mod config;
 pub mod discovery;
 pub mod errors;
 pub mod handlers;
+pub mod jobs;
 pub mod middleware;
 pub mod p2p;
 pub mod repair;

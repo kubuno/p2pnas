@@ -49,7 +49,14 @@ pub async fn repair_all(st: &AppState) -> RepairReport {
     let mut reachable: HashMap<String, String> = HashMap::new();
     for (pid, addr) in &peers {
         let alive = p2pnas_p2p::ping(addr, &st.identity.peer_id, st.settings.server.port).await.is_ok();
-        record_peer_health(st, pid, alive).await;
+        let just_down = record_peer_health(st, pid, alive).await;
+        if just_down {
+            tracing::warn!(peer_id = %pid, "peer marked down after repeated failures");
+            let _ = sqlx::query("INSERT INTO p2pnas.events (kind, payload) VALUES ('peer_down', $1)")
+                .bind(json!({ "peer_id": pid, "addr": addr }))
+                .execute(&st.db)
+                .await;
+        }
         if alive {
             reachable.insert(pid.clone(), addr.clone());
         }
@@ -245,19 +252,43 @@ async fn place_shard(st: &AppState, reachable: &HashMap<String, String>, target:
     matches!(p2pnas_p2p::request(addr, &msg).await, Ok(P2pMessage::Ack { .. }))
 }
 
-/// Update a peer's reliability after a liveness probe (EWMA toward 100 or 0).
-async fn record_peer_health(st: &AppState, peer_id: &str, alive: bool) {
-    // Smooth so a single blip doesn't crater the score; a sustained outage does.
-    let sql = if alive {
+/// Consecutive failed probes before a peer is marked `down` (and excluded from
+/// new placements until it answers again).
+const DOWN_THRESHOLD: i32 = 5;
+
+/// Update a peer's reliability after a liveness probe (EWMA toward 100 or 0) and
+/// its consecutive-failure / status flag. Returns true if the peer just went
+/// from active → down (so the caller can schedule a repair).
+async fn record_peer_health(st: &AppState, peer_id: &str, alive: bool) -> bool {
+    if alive {
+        let _ = sqlx::query(
+            "UPDATE p2pnas.peers
+             SET reliability_score = LEAST(100.0, reliability_score * 0.8 + 20.0),
+                 consecutive_failures = 0, status = 'active', last_seen = now()
+             WHERE peer_id = $1",
+        )
+        .bind(peer_id)
+        .execute(&st.db)
+        .await;
+        return false;
+    }
+    // Failure: decay score, bump the failure counter, flip to 'down' at the
+    // threshold. RETURNING tells us whether this probe crossed the line.
+    let row: Option<(i32, String)> = sqlx::query_as(
         "UPDATE p2pnas.peers
-         SET reliability_score = LEAST(100.0, reliability_score * 0.8 + 20.0), last_seen = now()
-         WHERE peer_id = $1"
-    } else {
-        "UPDATE p2pnas.peers
-         SET reliability_score = GREATEST(0.0, reliability_score * 0.8)
-         WHERE peer_id = $1"
-    };
-    let _ = sqlx::query(sql).bind(peer_id).execute(&st.db).await;
+         SET reliability_score = GREATEST(0.0, reliability_score * 0.8),
+             consecutive_failures = consecutive_failures + 1,
+             status = CASE WHEN consecutive_failures + 1 >= $2 THEN 'down' ELSE status END
+         WHERE peer_id = $1
+         RETURNING consecutive_failures, status",
+    )
+    .bind(peer_id)
+    .bind(DOWN_THRESHOLD)
+    .fetch_optional(&st.db)
+    .await
+    .ok()
+    .flatten();
+    matches!(row, Some((f, s)) if s == "down" && f == DOWN_THRESHOLD)
 }
 
 /// Log a data-loss-risk event for a chunk that can no longer be reconstructed.

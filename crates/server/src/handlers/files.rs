@@ -5,6 +5,8 @@ use axum::{
     response::{IntoResponse, Response},
     Extension, Json,
 };
+use std::sync::Arc;
+
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -98,8 +100,9 @@ pub async fn upload(
 /// Move each shard to a peer (round-robin over `[self] + peers`); shards that
 /// can't be placed remotely stay local. No peers → everything stays local.
 async fn distribute_shards(st: &AppState, user_id: &str, file_id: &str) {
+    // Skip peers already flagged `down` — they're known-bad, no point pinging.
     let all_peers: Vec<(String, String)> =
-        sqlx::query_as("SELECT peer_id, addr FROM p2pnas.peers WHERE peer_id <> $1")
+        sqlx::query_as("SELECT peer_id, addr FROM p2pnas.peers WHERE peer_id <> $1 AND status <> 'down'")
             .bind(&st.identity.peer_id)
             .fetch_all(&st.db)
             .await
@@ -136,7 +139,9 @@ async fn distribute_shards(st: &AppState, user_id: &str, file_id: &str) {
     };
 
     // Decide placement (round-robin over [self] + peers; slot 0 keeps it local).
-    let mut placements: Vec<(String, String, String)> = Vec::new(); // (fragment_id, peer_id, addr)
+    // Each remote placement records its PRIMARY peer index; the task fails over to
+    // the next peers if the primary doesn't Ack.
+    let mut placements: Vec<(String, usize)> = Vec::new(); // (fragment_id, primary peer index)
     let mut slot = 0usize;
     for (_chunk, shards) in plan {
         for s in shards {
@@ -145,30 +150,37 @@ async fn distribute_shards(st: &AppState, user_id: &str, file_id: &str) {
             if target == 0 {
                 continue; // keep on self
             }
-            let (peer_id, addr) = peers[target - 1].clone();
-            placements.push((s.fragment_id, peer_id, addr));
+            placements.push((s.fragment_id, target - 1));
         }
     }
 
     // Move shards to their targets concurrently — one in-flight StoreShard per
     // placement instead of strictly sequential round-trips.
+    let peers = Arc::new(peers);
     let mut set = tokio::task::JoinSet::new();
-    for (frag, peer_id, addr) in placements {
+    for (frag, primary) in placements {
         let st = st.clone();
+        let peers = peers.clone();
         set.spawn(async move {
             let (store, f) = (st.store.clone(), frag.clone());
             let Ok(Some(bytes)) = tokio::task::spawn_blocking(move || p2pnas_store::service::read_local(&store, &f)).await else { return };
-            let msg = P2pMessage::StoreShard {
-                fragment_id: frag.clone(),
-                owner_peer_id: st.identity.peer_id.clone(),
-                data: bytes,
-            };
-            if let Ok(P2pMessage::Ack { .. }) = p2pnas_p2p::request(&addr, &msg).await {
-                let (man, f2, pid) = (st.manifest.clone(), frag.clone(), peer_id);
-                let _ = tokio::task::spawn_blocking(move || p2pnas_store::service::set_location(&man, &f2, &pid)).await;
-                let (store2, f3) = (st.store.clone(), frag);
-                let _ = tokio::task::spawn_blocking(move || store2.delete(&f3)).await;
+            // Try the primary peer, then fail over to the next ones (up to 3).
+            for off in 0..peers.len().min(3) {
+                let (peer_id, addr) = peers[(primary + off) % peers.len()].clone();
+                let msg = P2pMessage::StoreShard {
+                    fragment_id: frag.clone(),
+                    owner_peer_id: st.identity.peer_id.clone(),
+                    data: bytes.clone(),
+                };
+                if let Ok(P2pMessage::Ack { .. }) = p2pnas_p2p::request(&addr, &msg).await {
+                    let (man, f2, pid) = (st.manifest.clone(), frag.clone(), peer_id);
+                    let _ = tokio::task::spawn_blocking(move || p2pnas_store::service::set_location(&man, &f2, &pid)).await;
+                    let (store2, f3) = (st.store.clone(), frag.clone());
+                    let _ = tokio::task::spawn_blocking(move || store2.delete(&f3)).await;
+                    return;
+                }
             }
+            // No peer accepted it → leave the shard local (still recoverable).
         });
     }
     while set.join_next().await.is_some() {}
