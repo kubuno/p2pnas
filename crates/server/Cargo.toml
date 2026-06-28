@@ -44,5 +44,9 @@ toml               = "0.8"
 # a subprocess, so it stays within the seccomp execve ban).
 mdns-sd            = "0.11"
 
+# Offline IP→country lookup (admin supplies a GeoLite2 .mmdb file) for the
+# optional jurisdiction-aware placement constraint. No network, fully sovereign.
+maxminddb          = "0.24"
+
 # Shared core crate — git tag in prod, patched to a local checkout for offline dev.
 kubuno-seccomp = { git = "https://github.com/kubuno/core", tag = "seccomp-v0.1.0", package = "kubuno-seccomp" }

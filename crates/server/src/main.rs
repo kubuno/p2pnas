@@ -136,12 +136,18 @@ async fn main() -> Result<()> {
     ));
     let store = Arc::new(p2pnas_store::ChunkStore::new(data_dir.join("chunks")));
 
+    // Optional offline GeoIP (admin-supplied GeoLite2 .mmdb) for geo features.
+    let geoip = Arc::new(
+        settings.discovery.geoip_db.as_deref().and_then(kubuno_p2pnas::geoip::GeoResolver::open),
+    );
+
     let state = AppState {
         db:       pool,
         settings: Arc::new(settings.clone()),
         identity,
         manifest,
         store,
+        geoip,
     };
 
     // Register with the core (infinite retry) + heartbeat every 30s.

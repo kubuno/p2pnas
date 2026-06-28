@@ -10,4 +10,6 @@ pub struct AppState {
     pub identity: Arc<NodeIdentity>,
     pub manifest: Arc<Manifest>,
     pub store:    Arc<ChunkStore>,
+    /// Optional offline GeoIP resolver (None unless an admin supplied a database).
+    pub geoip:    Arc<Option<crate::geoip::GeoResolver>>,
 }

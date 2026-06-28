@@ -103,12 +103,21 @@ pub async fn upload(
 /// stay local. No peers → everything stays local.
 async fn distribute_shards(st: &AppState, user_id: &str, file_id: &str) {
     // Skip peers already flagged `down` — they're known-bad, no point pinging.
-    let all_peers: Vec<(String, String)> =
-        sqlx::query_as("SELECT peer_id, addr FROM p2pnas.peers WHERE peer_id <> $1 AND status <> 'down'")
+    let all_peers: Vec<(String, String, Option<String>)> =
+        sqlx::query_as("SELECT peer_id, addr, country FROM p2pnas.peers WHERE peer_id <> $1 AND status <> 'down'")
             .bind(&st.identity.peer_id)
             .fetch_all(&st.db)
             .await
             .unwrap_or_default();
+
+    // Jurisdiction constraint: if an allow-list is configured, only keep peers in
+    // an allowed country (unknown country → excluded, conservative).
+    let allow = &st.settings.discovery.geoip_allow;
+    let all_peers: Vec<(String, String)> = all_peers
+        .into_iter()
+        .filter(|(_, _, country)| allow.is_empty() || country.as_deref().is_some_and(|c| allow.iter().any(|a| a == c)))
+        .map(|(pid, addr, _)| (pid, addr))
+        .collect();
 
     // Probe liveness AND measure latency; keep only peers that answer.
     let mut live: Vec<(String, String, f64)> = Vec::new(); // (peer_id, addr, rtt_ms)
