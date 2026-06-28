@@ -23,6 +23,13 @@ internal_secret = "change_me"
 # Répertoire de données du nœud : clé d'identité, manifest SQLCipher, shards.
 data_dir = "/var/lib/kubuno/modules/p2pnas"
 
+# ── Réseau P2P ────────────────────────────────────────────────────────────────
+[p2p]
+# Écoute du listener pair-à-pair (port distinct de l'API HTTP). Ouvrir ce port
+# côté pare-feu/box pour rejoindre le réseau de résilience.
+host = "0.0.0.0"
+port = 7474
+
 [logging]
 level  = "info"
 format = "pretty"

@@ -13,6 +13,8 @@ path = "src/main.rs"
 [dependencies]
 p2pnas-core  = { path = "../core" }
 p2pnas-store = { path = "../store" }
+p2pnas-p2p   = { path = "../p2p" }
+async-trait  = "0.1"
 
 # Per-thread-heap allocator — avoids glibc arena/mmap contention when the
 # data-parallel pipeline (rayon) allocates chunk buffers across cores.

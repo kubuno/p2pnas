@@ -104,6 +104,34 @@ pub async fn set_contribution(State(st): State<AppState>, Json(body): Json<SetCo
     Ok(Json(json!({ "contributed_bytes": body.bytes })))
 }
 
+#[derive(Deserialize)]
+pub struct AddPeer {
+    pub addr: String,
+}
+
+/// Add a trusted peer (admin only): handshake over P2P, then record it.
+pub async fn add_peer(State(st): State<AppState>, Json(body): Json<AddPeer>) -> Result<Json<Value>> {
+    let addr = body.addr.trim().to_string();
+    if addr.is_empty() {
+        return Err(P2pError::BadRequest("addr requis (ip:port)".into()));
+    }
+    let (peer_id, api_port) =
+        p2pnas_p2p::handshake(&addr, &st.identity.peer_id, st.settings.server.port)
+            .await
+            .map_err(|e| P2pError::BadRequest(format!("handshake échoué: {e}")))?;
+
+    sqlx::query(
+        "INSERT INTO p2pnas.peers (peer_id, addr, last_seen) VALUES ($1, $2, now())
+         ON CONFLICT (peer_id) DO UPDATE SET addr = EXCLUDED.addr, last_seen = now()",
+    )
+    .bind(&peer_id)
+    .bind(&addr)
+    .execute(&st.db)
+    .await?;
+
+    Ok(Json(json!({ "peer_id": peer_id, "addr": addr, "api_port": api_port })))
+}
+
 /// List trusted peers (admin only).
 pub async fn list_peers(State(st): State<AppState>) -> Result<Json<Value>> {
     let rows: Vec<(String, String, f64, i64)> = sqlx::query_as(

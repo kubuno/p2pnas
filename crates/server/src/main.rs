@@ -194,6 +194,25 @@ async fn main() -> Result<()> {
         });
     }
 
+    // Embedded P2P listener (separate port). seccomp only blocks execve, so
+    // sockets are allowed; this peer hosts/serves shards for the network.
+    {
+        let p2p_addr = format!("{}:{}", settings.p2p.host, settings.p2p.port);
+        match tokio::net::TcpListener::bind(&p2p_addr).await {
+            Ok(p2p_listener) => {
+                tracing::info!("Listener P2P p2pnas sur {p2p_addr}");
+                let handler = std::sync::Arc::new(kubuno_p2pnas::p2p::P2pShardHandler {
+                    peer_id:  state.identity.peer_id.clone(),
+                    api_port: settings.server.port,
+                    store:    state.store.clone(),
+                    db:       state.db.clone(),
+                });
+                tokio::spawn(p2pnas_p2p::serve(p2p_listener, handler));
+            }
+            Err(e) => tracing::error!(error = %e, addr = %p2p_addr, "bind P2P échoué — pair en mode dégradé"),
+        }
+    }
+
     axum::serve(
         listener,
         router::build(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),

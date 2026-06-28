@@ -1,0 +1,33 @@
+//! P2P client helpers: one connection per request/response round-trip.
+
+use std::time::Duration;
+
+use tokio::net::TcpStream;
+use tokio::time::timeout;
+
+use crate::protocol::{read_message, write_message, P2pMessage};
+
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const IO_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Connect to `addr`, send `msg`, return the single response.
+pub async fn request(addr: &str, msg: &P2pMessage) -> std::io::Result<P2pMessage> {
+    let mut stream = timeout(CONNECT_TIMEOUT, TcpStream::connect(addr))
+        .await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "connect timeout"))??;
+    timeout(IO_TIMEOUT, async {
+        write_message(&mut stream, msg).await?;
+        read_message(&mut stream).await
+    })
+    .await
+    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "io timeout"))?
+}
+
+/// Handshake: Ping a peer and return its (peer_id, api_port) from the Pong.
+pub async fn handshake(addr: &str, my_peer_id: &str, my_api_port: u16) -> std::io::Result<(String, u16)> {
+    let resp = request(addr, &P2pMessage::Ping { peer_id: my_peer_id.to_string(), api_port: my_api_port }).await?;
+    match resp {
+        P2pMessage::Pong { peer_id, api_port } => Ok((peer_id, api_port)),
+        other => Err(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("expected Pong, got {other:?}"))),
+    }
+}

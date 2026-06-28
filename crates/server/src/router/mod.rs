@@ -20,7 +20,7 @@ pub fn build(state: AppState) -> Router {
     let admin_routes = Router::new()
         .route("/admin/quotas", get(admin::list_quotas).post(admin::set_quota))
         .route("/admin/contribution", post(admin::set_contribution))
-        .route("/admin/peers", get(admin::list_peers))
+        .route("/admin/peers", get(admin::list_peers).post(admin::add_peer))
         .route_layer(middleware::from_fn(require_admin));
 
     // Authenticated routes (the core proxy injects the user headers).

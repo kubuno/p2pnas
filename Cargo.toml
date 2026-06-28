@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/store", "crates/server"]
+members = ["crates/core", "crates/store", "crates/p2p", "crates/server"]
 resolver = "2"
 
 # Build the shared core crate offline against a sibling checkout of kubuno/core

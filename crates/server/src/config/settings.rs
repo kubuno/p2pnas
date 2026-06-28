@@ -9,6 +9,7 @@ pub struct Settings {
     pub core:     CoreSettings,
     pub database: DatabaseSettings,
     pub storage:  StorageSettings,
+    pub p2p:      P2pSettings,
     pub logging:  LoggingSettings,
 }
 
@@ -16,6 +17,13 @@ pub struct Settings {
 pub struct StorageSettings {
     /// Node data directory: identity key, SQLCipher manifest, local shard store.
     pub data_dir: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct P2pSettings {
+    /// Address the embedded P2P listener binds (separate from the HTTP port).
+    pub host: String,
+    pub port: u16,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -92,6 +100,8 @@ impl Settings {
             .set_default("database.connect_timeout", 10i64)?
             .set_default("database.run_migrations", true)?
             .set_default("storage.data_dir", "/var/lib/kubuno/modules/p2pnas")?
+            .set_default("p2p.host", "0.0.0.0")?
+            .set_default("p2p.port", 7474i64)?
             .set_default("logging.level", "info")?
             .set_default("logging.format", "pretty")?
             .add_source(File::with_name("config").required(false))
