@@ -197,14 +197,21 @@ async fn reconstruct_file(st: &AppState, uid: &str, file_id: &str) -> Result<Vec
         let mut present: Vec<Option<Vec<u8>>> = vec![None; TOTAL_SHARDS];
         for s in shards {
             let bytes = if s.location == "local" {
-                let (store, frag) = (st.store.clone(), s.fragment_id.clone());
-                tokio::task::spawn_blocking(move || p2pnas_store::service::read_local(&store, &frag))
+                // Integrity-checked read: a corrupt local shard is treated as lost
+                // (RS reconstructs it from the others).
+                let (store, frag, hash) = (st.store.clone(), s.fragment_id.clone(), s.hash.clone());
+                tokio::task::spawn_blocking(move || p2pnas_store::service::read_local_verified(&store, &frag, &hash))
                     .await
                     .ok()
                     .flatten()
             } else if let Some((_, addr)) = peers.iter().find(|(pid, _)| pid == &s.location) {
                 match p2pnas_p2p::request(addr, &P2pMessage::GetShard { fragment_id: s.fragment_id.clone() }).await {
-                    Ok(P2pMessage::ShardData { data, .. }) => Some(data),
+                    // Verify the peer returned the bytes we expect (tamper/corruption).
+                    Ok(P2pMessage::ShardData { data, .. })
+                        if s.hash.is_empty() || p2pnas_p2p::content_hash(&data) == s.hash =>
+                    {
+                        Some(data)
+                    }
                     _ => None,
                 }
             } else {

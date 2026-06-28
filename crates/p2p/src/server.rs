@@ -25,6 +25,14 @@ pub trait ShardHandler: Send + Sync {
     async fn has(&self, fragment_id: &str) -> bool {
         self.get(fragment_id).await.is_some()
     }
+    /// Proof-of-storage: content hash of the held shard (empty if not held).
+    /// Default reads + hashes the bytes; correct for any honest host.
+    async fn audit(&self, fragment_id: &str) -> String {
+        match self.get(fragment_id).await {
+            Some(b) => crate::protocol::content_hash(&b),
+            None => String::new(),
+        }
+    }
 }
 
 /// Accept loop. Run as a background task for the lifetime of the node.
@@ -68,6 +76,10 @@ async fn handle_conn(mut stream: TcpStream, handler: Arc<dyn ShardHandler>) -> s
             P2pMessage::HasShard { fragment_id } => {
                 let present = handler.has(&fragment_id).await;
                 P2pMessage::HasShardResult { fragment_id, present }
+            }
+            P2pMessage::AuditShard { fragment_id } => {
+                let hash = handler.audit(&fragment_id).await;
+                P2pMessage::AuditResult { fragment_id, hash }
             }
             P2pMessage::DeleteShard { fragment_id, owner_peer_id } => {
                 handler.delete(&fragment_id, &owner_peer_id).await;

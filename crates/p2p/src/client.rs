@@ -31,6 +31,15 @@ pub async fn has_shard(addr: &str, fragment_id: &str) -> std::io::Result<bool> {
     }
 }
 
+/// Proof-of-storage probe: returns the host's content hash for a shard (empty
+/// string if the host doesn't hold it).
+pub async fn audit_shard(addr: &str, fragment_id: &str) -> std::io::Result<String> {
+    match request(addr, &P2pMessage::AuditShard { fragment_id: fragment_id.to_string() }).await? {
+        P2pMessage::AuditResult { hash, .. } => Ok(hash),
+        other => Err(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("expected AuditResult, got {other:?}"))),
+    }
+}
+
 /// Liveness probe: returns Ok if the peer answers a Ping with a Pong.
 pub async fn ping(addr: &str, my_peer_id: &str, my_api_port: u16) -> std::io::Result<()> {
     handshake(addr, my_peer_id, my_api_port).await.map(|_| ())

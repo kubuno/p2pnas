@@ -30,10 +30,24 @@ pub enum P2pMessage {
     HasShard { fragment_id: String },
     HasShardResult { fragment_id: String, present: bool },
 
+    /// Lightweight proof-of-storage: ask the host to return the content hash of a
+    /// shard it holds. The owner checks it against the hash recorded in its
+    /// manifest, detecting silent corruption/loss a bare `HasShard` would miss.
+    /// (Empty hash = not held.) Does not defeat a peer that retains only the hash.
+    AuditShard { fragment_id: String },
+    AuditResult { fragment_id: String, hash: String },
+
     /// Drop a shard the owner no longer needs.
     DeleteShard { fragment_id: String, owner_peer_id: String },
 
     Error { message: String },
+}
+
+/// Canonical shard content hash (hex of the first 16 bytes of blake3) — matches
+/// `p2pnas_store::shard_hash` so an audit reply can be compared to the manifest.
+pub fn content_hash(bytes: &[u8]) -> String {
+    let digest = blake3::hash(bytes);
+    digest.as_bytes()[..16].iter().map(|b| format!("{b:02x}")).collect()
 }
 
 pub async fn read_message(stream: &mut TcpStream) -> std::io::Result<P2pMessage> {

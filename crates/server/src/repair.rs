@@ -194,12 +194,19 @@ fn choose_target(loc_count: &HashMap<String, usize>, reachable: &HashMap<String,
         .unwrap_or_else(|| "local".to_string())
 }
 
-/// Is a shard still retrievable from where the manifest says it lives?
+/// Is a shard still retrievable AND intact where the manifest says it lives?
+/// Remote shards are proof-of-storage audited (content hash compared to the
+/// manifest), so a peer that silently corrupted/dropped the data — which a bare
+/// `HasShard` would not catch — is treated as a loss and re-replicated.
 async fn shard_reachable(st: &AppState, reachable: &HashMap<String, String>, s: &ShardRow) -> bool {
     if s.location == "local" {
         st.store.exists(&s.fragment_id)
     } else if let Some(addr) = reachable.get(&s.location) {
-        p2pnas_p2p::has_shard(addr, &s.fragment_id).await.unwrap_or(false)
+        match p2pnas_p2p::audit_shard(addr, &s.fragment_id).await {
+            // Empty manifest hash = legacy shard → fall back to mere presence.
+            Ok(h) if !h.is_empty() => s.hash.is_empty() || h == s.hash,
+            _ => false,
+        }
     } else {
         false
     }
