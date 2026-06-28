@@ -314,6 +314,16 @@ pub fn list_all(manifest: &Manifest) -> Result<Vec<FileRow>> {
     manifest::list_all_files(&conn)
 }
 
+/// Aggregate manifest stats for the metrics endpoint: (file_count, chunk_count,
+/// stored_bytes) across all users.
+pub fn node_stats(manifest: &Manifest) -> Result<(i64, i64, i64)> {
+    let files = list_all(manifest)?;
+    let file_count = files.len() as i64;
+    let chunk_count = files.iter().map(|f| f.chunk_count).sum();
+    let stored_bytes = files.iter().map(|f| f.stored_bytes).sum();
+    Ok((file_count, chunk_count, stored_bytes))
+}
+
 /// Rebuild every shard of a chunk from the surviving ones. `present[i]` holds
 /// shard `i`'s bytes (or None if it must be regenerated); RS needs ≥ DATA_SHARDS.
 /// Returns the 14 shard byte-vectors in index order, byte-identical to the

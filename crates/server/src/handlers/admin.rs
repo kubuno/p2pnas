@@ -141,6 +141,60 @@ pub async fn run_repair(State(st): State<AppState>) -> Result<Json<Value>> {
     Ok(Json(json!({ "repair": report })))
 }
 
+/// Enqueue a repair/rebalance job (admin only) — non-blocking; the worker runs it.
+pub async fn rebalance(State(st): State<AppState>) -> Result<Json<Value>> {
+    crate::jobs::enqueue(&st.db, "repair", json!({})).await;
+    Ok(Json(json!({ "enqueued": "repair" })))
+}
+
+/// Node metrics (admin only): storage, peers, jobs, discovery, data-loss risk.
+pub async fn metrics(State(st): State<AppState>) -> Result<Json<Value>> {
+    let (contributed, used, hosted): (i64, i64, i64) =
+        sqlx::query_as("SELECT contributed_bytes, used_bytes, hosted_bytes FROM p2pnas.node_local WHERE id = 1")
+            .fetch_one(&st.db)
+            .await
+            .unwrap_or((0, 0, 0));
+    let (peers_total, peers_active, peers_down): (i64, i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*), COUNT(*) FILTER (WHERE status = 'active'), COUNT(*) FILTER (WHERE status = 'down') FROM p2pnas.peers",
+    )
+    .fetch_one(&st.db)
+    .await
+    .unwrap_or((0, 0, 0));
+    let hosted_shards: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM p2pnas.hosted_shards")
+        .fetch_one(&st.db)
+        .await
+        .unwrap_or(0);
+    let (jobs_pending, jobs_running): (i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*) FILTER (WHERE state = 'pending'), COUNT(*) FILTER (WHERE state = 'running') FROM p2pnas.jobs",
+    )
+    .fetch_one(&st.db)
+    .await
+    .unwrap_or((0, 0));
+    let unrepairable: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM p2pnas.events WHERE kind = 'chunk_unrepairable'")
+        .fetch_one(&st.db)
+        .await
+        .unwrap_or(0);
+
+    let man = st.manifest.clone();
+    let (files, chunks, stored) = tokio::task::spawn_blocking(move || p2pnas_store::service::node_stats(&man))
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or((0, 0, 0));
+
+    Ok(Json(json!({
+        "node": {
+            "contributed_bytes": contributed, "used_bytes": used, "hosted_bytes": hosted,
+            "available_bytes": (contributed - used - hosted).max(0),
+        },
+        "storage": { "files": files, "chunks": chunks, "stored_bytes": stored, "hosted_shards": hosted_shards },
+        "peers": { "total": peers_total, "active": peers_active, "down": peers_down },
+        "jobs": { "pending": jobs_pending, "running": jobs_running },
+        "discovery": { "mdns": st.settings.discovery.mdns, "dht": st.settings.discovery.dht },
+        "risk": { "unrepairable_events": unrepairable },
+    })))
+}
+
 /// Forget a peer (admin only). Shards currently hosted there stay referenced in
 /// the manifest until a repair pass relocates them; removing an unreachable peer
 /// lets the next pass treat its shards as lost and re-replicate them.

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use p2pnas_core::erasure::TOTAL_SHARDS;
+use p2pnas_core::erasure::{DATA_SHARDS, PARITY_SHARDS, TOTAL_SHARDS};
 use p2pnas_p2p::P2pMessage;
 
 use crate::{
@@ -184,6 +184,68 @@ async fn distribute_shards(st: &AppState, user_id: &str, file_id: &str) {
         });
     }
     while set.join_next().await.is_some() {}
+}
+
+/// Per-file durability: how many of each chunk's shards are currently reachable,
+/// and whether the file is fully redundant / still recoverable / at risk.
+pub async fn file_health(
+    State(st): State<AppState>,
+    Extension(user): Extension<P2pUser>,
+    Path(file_id): Path<String>,
+) -> Result<Json<Value>> {
+    let uid = user.id.to_string();
+    let (man, uid2, fid) = (st.manifest.clone(), uid.clone(), file_id.clone());
+    let (file, plan) = tokio::task::spawn_blocking(move || p2pnas_store::service::pull_plan(&man, &uid2, &fid))
+        .await
+        .map_err(join_err)??;
+
+    // Which peers are live right now?
+    let peers: Vec<(String, String)> = sqlx::query_as("SELECT peer_id, addr FROM p2pnas.peers")
+        .fetch_all(&st.db)
+        .await
+        .unwrap_or_default();
+    let mut live: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for (pid, addr) in &peers {
+        if p2pnas_p2p::ping(addr, &st.identity.peer_id, st.settings.server.port).await.is_ok() {
+            live.insert(pid.clone(), addr.clone());
+        }
+    }
+
+    let mut min_reachable = TOTAL_SHARDS;
+    for (_chunk, shards) in &plan {
+        let mut reachable = 0usize;
+        for s in shards {
+            let ok = if s.location == "local" {
+                st.store.exists(&s.fragment_id)
+            } else if let Some(addr) = live.get(&s.location) {
+                p2pnas_p2p::has_shard(addr, &s.fragment_id).await.unwrap_or(false)
+            } else {
+                false
+            };
+            if ok {
+                reachable += 1;
+            }
+        }
+        min_reachable = min_reachable.min(reachable);
+    }
+
+    // Margin = reachable shards above the reconstruction floor; ≥ PARITY means we
+    // can still lose a whole location's worth and rebuild.
+    let recoverable = min_reachable >= DATA_SHARDS;
+    let margin = min_reachable.saturating_sub(DATA_SHARDS);
+    Ok(Json(json!({
+        "file_id": file.file_id,
+        "path": file.path,
+        "size": file.size,
+        "chunks": plan.len(),
+        "data_shards": DATA_SHARDS,
+        "total_shards": TOTAL_SHARDS,
+        "min_reachable": min_reachable,
+        "fully_redundant": min_reachable >= TOTAL_SHARDS,
+        "recoverable": recoverable,
+        "single_failure_safe": margin >= PARITY_SHARDS,
+        "at_risk": !recoverable || margin < PARITY_SHARDS,
+    })))
 }
 
 /// List the user's files.

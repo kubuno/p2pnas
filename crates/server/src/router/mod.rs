@@ -24,6 +24,8 @@ pub fn build(state: AppState) -> Router {
         .route("/admin/peers/:peer_id", axum::routing::delete(admin::remove_peer))
         .route("/admin/repair", post(admin::run_repair))
         .route("/admin/events", get(admin::list_events))
+        .route("/admin/metrics", get(admin::metrics))
+        .route("/admin/rebalance", post(admin::rebalance))
         .route_layer(middleware::from_fn(require_admin));
 
     // Authenticated routes (the core proxy injects the user headers).
@@ -32,6 +34,7 @@ pub fn build(state: AppState) -> Router {
         .route("/quota/me", get(quota::me))
         .route("/files", get(files::list).post(files::upload))
         .route("/files/:id", get(files::download).delete(files::delete))
+        .route("/files/:id/health", get(files::file_health))
         // Folder-aware "My Cloud" mount (path-based, parity with Drive).
         .route("/browse", get(files::browse))
         .route("/download", get(files::download_path))
