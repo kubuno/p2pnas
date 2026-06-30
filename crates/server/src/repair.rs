@@ -46,17 +46,33 @@ pub async fn repair_all(st: &AppState) -> RepairReport {
             .unwrap_or_default();
     rep.peers_total = peers.len();
 
+    // Probe all peers CONCURRENTLY (one node with many offline peers must not
+    // serialize 8×timeout). The slow network part runs in parallel; the fast DB
+    // bookkeeping (which takes row locks) is then done sequentially, so concurrent
+    // repair passes can't contend on the same peer rows for the whole probe time.
+    let mut set = tokio::task::JoinSet::new();
+    for (pid, addr) in &peers {
+        let (id, port, pid, addr) = (st.identity.peer_id.clone(), st.settings.server.port, pid.clone(), addr.clone());
+        set.spawn(async move {
+            let probe = p2pnas_p2p::ping_observed(&addr, &id, port).await.ok();
+            (pid, addr, probe)
+        });
+    }
+    let mut probes = Vec::with_capacity(peers.len());
+    while let Some(r) = set.join_next().await {
+        if let Ok(x) = r {
+            probes.push(x);
+        }
+    }
+
     let mut reachable: HashMap<String, String> = HashMap::new();
     let mut observed: HashMap<String, usize> = HashMap::new(); // public IP → vote count
-    for (pid, addr) in &peers {
-        // Probe liveness, measure RTT (feeds the latency EWMA), and learn the
-        // public IP this peer saw us at (STUN-style self-IP discovery).
-        let probe = p2pnas_p2p::ping_observed(addr, &st.identity.peer_id, st.settings.server.port).await.ok();
+    for (pid, addr, probe) in probes {
         let rtt = probe.as_ref().map(|(r, _)| *r);
         if let Some((_, Some(ip))) = &probe {
             *observed.entry(ip.clone()).or_default() += 1;
         }
-        let just_down = record_peer_health(st, pid, rtt).await;
+        let just_down = record_peer_health(st, &pid, rtt).await;
         if just_down {
             tracing::warn!(peer_id = %pid, "peer marked down after repeated failures");
             let _ = sqlx::query("INSERT INTO p2pnas.events (kind, payload) VALUES ('peer_down', $1)")
@@ -65,7 +81,7 @@ pub async fn repair_all(st: &AppState) -> RepairReport {
                 .await;
         }
         if rtt.is_some() {
-            reachable.insert(pid.clone(), addr.clone());
+            reachable.insert(pid, addr);
         }
     }
     rep.peers_reachable = reachable.len();

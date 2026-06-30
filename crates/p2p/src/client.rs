@@ -7,7 +7,7 @@ use tokio::time::timeout;
 
 use crate::protocol::{read_message, write_message, P2pMessage};
 
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Connect to `addr`, send `msg`, return the single response.
