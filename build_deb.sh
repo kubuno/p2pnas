@@ -24,8 +24,12 @@ VERSION="$(grep -m1 '^version' crates/server/Cargo.toml | sed -E 's/.*"([^"]+)".
 # `kubuno-core 0.1.0-1069`. Compare against the plain upstream version instead.
 CORE_DEP="${VERSION%%-*}"
 
-BUILD_NUM=$(( $(cat .build_number 2>/dev/null || echo 0) + 1 ))
-echo "$BUILD_NUM" > .build_number
+# Git-derived build identifier: <commit-count>.g<short-hash>[.dirty.<UTC stamp>]
+# Traceable to the exact commit, monotonic across builds, machine-independent.
+GIT_COMMIT="$(git rev-parse --short=7 HEAD 2>/dev/null || echo unknown)"
+GIT_COUNT="$(git rev-list --count HEAD 2>/dev/null || echo 0)"
+BUILD_NUM="${GIT_COUNT}.g${GIT_COMMIT}"
+[ -n "$(git status --porcelain 2>/dev/null)" ] && BUILD_NUM="${BUILD_NUM}.dirty.$(date -u +%Y%m%d%H%M%S)"
 FULL_VERSION="${VERSION}-${BUILD_NUM}"
 
 echo "==> Build ${PACKAGE} ${FULL_VERSION} (${ARCH})"
