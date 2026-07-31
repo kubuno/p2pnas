@@ -50,8 +50,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: windows, path: dist/*.exe }
       - if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with: { files: dist/*.exe }
+        name: upload to release
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: bash .github/upload-asset.sh 'dist/*.exe'
 
   macos:
     runs-on: macos-latest
@@ -69,5 +70,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: macos, path: dist/*.pkg }
       - if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with: { files: dist/*.pkg }
+        name: upload to release
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: bash .github/upload-asset.sh 'dist/*.pkg'
