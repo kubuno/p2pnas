@@ -79,7 +79,7 @@ cat > "${PKG_DIR}/DEBIAN/control" << EOF
 Package: ${PACKAGE}
 Version: ${FULL_VERSION}
 Architecture: ${ARCH}
-Maintainer: Kubuno Contributors <kubuno@toiledev.com>
+Maintainer: Martinien OLINGA <kubuno@martinienolinga.com>
 Depends: ca-certificates, kubuno-core (>= ${CORE_DEP})
 Section: web
 Priority: optional
