@@ -46,7 +46,7 @@ mdns-sd            = "0.11"
 
 
 # Shared core crates — git tags in prod, patched to a local checkout for offline dev.
-kubuno-seccomp = { git = "https://github.com/kubuno/core", tag = "seccomp-v0.1.0", package = "kubuno-seccomp" }
+kubuno-seccomp = { git = "https://github.com/kubuno/core", tag = "seccomp-v0.1.1", package = "kubuno-seccomp" }
 # Signed identity token minted by the core proxy (HMAC-SHA256, short expiry,
 # module-scoped audience). Replaces blind trust in the `X-Kubuno-User-*` headers.
 kubuno-modauth = { git = "https://github.com/kubuno/core", tag = "modauth-v0.1.0", package = "kubuno-modauth" }

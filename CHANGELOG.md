@@ -19,6 +19,10 @@ number at release time, and CI publishes that section as the GitHub Release note
   `core` repository, a path that exists only on a machine holding the whole
   workspace. The crates are now resolved solely from their published git tags,
   as in every other Kubuno repository.
+- **The sandbox crate is aligned with the rest of the platform.** The
+  project pinned `kubuno-seccomp` one patch release behind every other
+  Kubuno repository, so it did not pick up the fixes the others already
+  had.
 
 ## [0.2.0] - 2026-09-18
 
