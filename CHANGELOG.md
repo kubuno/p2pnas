@@ -9,6 +9,10 @@ number at release time, and CI publishes that section as the GitHub Release note
 
 ## [Unreleased]
 
+### Security
+
+- **TLS library updated to a patched release.** The pinned `rustls` carried
+  RUSTSEC-2026-0285 (medium). Every outbound HTTPS connection goes through it.
 ### Fixed
 
 - **The project builds again outside the maintainer's workspace.** Building
