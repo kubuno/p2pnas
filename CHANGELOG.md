@@ -11,6 +11,9 @@ number at release time, and CI publishes that section as the GitHub Release note
 
 ### Security
 
+- **Error library updated to a patched release.** `anyhow` moves from 1.0.103
+  to 1.0.104, closing an unsoundness in `Error::downcast_mut()`
+  (RUSTSEC-2026-0190).
 - **TLS library updated to a patched release.** The pinned `rustls` carried
   RUSTSEC-2026-0285 (medium). Every outbound HTTPS connection goes through it.
 ### Fixed
