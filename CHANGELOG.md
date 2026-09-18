@@ -9,6 +9,8 @@ number at release time, and CI publishes that section as the GitHub Release note
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-18
+
 ### Security
 
 - **Error library updated to a patched release.** `anyhow` moves from 1.0.103
