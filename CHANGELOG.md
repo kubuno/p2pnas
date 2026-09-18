@@ -9,6 +9,13 @@ number at release time, and CI publishes that section as the GitHub Release note
 
 ## [Unreleased]
 
+### Fixed
+
+- **A Windows package is produced again.** The release built on Linux and macOS
+  but never on Windows: the encrypted-database layer builds OpenSSL from source
+  through Perl, and the runner picked a Perl missing part of its core library.
+  Windows users had no package at all.
+
 ## [0.2.1] - 2026-09-18
 
 ### Security

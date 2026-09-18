@@ -27,8 +27,18 @@ jobs:
         with: { node-version: 24 }
       # build_kbpkg.sh compile le binaire (cross msvc via TARGET) + le frontend,
       # puis empaquette. Le serveur sait déballer ce ZIP sans outil externe.
+      # SQLCipher builds OpenSSL from source, and openssl-src drives that build
+      # with Perl. Under `shell: bash` the MSYS perl comes first in PATH and is
+      # missing Locale::Maketext::Simple, so the build died halfway through and
+      # no Windows package was ever produced. Point openssl-src at the Strawberry
+      # Perl the runner ships, which carries the full core library.
       - run: bash build_kbpkg.sh
-        env: { SQLX_OFFLINE: "true", OS: windows, ARCH: x86_64, TARGET: x86_64-pc-windows-msvc }
+        env:
+          SQLX_OFFLINE: "true"
+          OS: windows
+          ARCH: x86_64
+          TARGET: x86_64-pc-windows-msvc
+          OPENSSL_SRC_PERL: C:/Strawberry/perl/bin/perl.exe
       - uses: actions/upload-artifact@v4
         with: { name: windows, path: dist/*.kbpkg }
       - if: startsWith(github.ref, 'refs/tags/')
