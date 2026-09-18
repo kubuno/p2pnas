@@ -601,13 +601,12 @@ pub(crate) async fn fetch_shard(st: &AppState, reachable: &HashMap<String, Strin
     let bytes = if s.location == "local" {
         let (store, frag) = (st.store.clone(), s.fragment_id.clone());
         tokio::task::spawn_blocking(move || p2pnas_store::service::read_local(&store, &frag)).await.ok().flatten()?
-    } else if let Some(addr) = reachable.get(&s.location) {
+    } else {
+        let addr = reachable.get(&s.location)?;
         match p2pnas_p2p::request(addr, &P2pMessage::GetShard { fragment_id: s.fragment_id.clone() }).await {
             Ok(P2pMessage::ShardData { data, .. }) => data,
             _ => return None,
         }
-    } else {
-        return None;
     };
     if !p2pnas_store::service::verify_hash(&bytes, &s.hash) {
         tracing::warn!(
