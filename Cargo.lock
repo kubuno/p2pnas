@@ -1449,6 +1449,7 @@ dependencies = [
 [[package]]
 name = "kubuno-modauth"
 version = "0.1.0"
+source = "git+https://github.com/kubuno/core?tag=modauth-v0.1.0#fb4952b3bcbf6edcd3ddd70fae93060cf38b7380"
 dependencies = [
  "base64 0.22.1",
  "hmac",
@@ -1493,7 +1494,8 @@ dependencies = [
 
 [[package]]
 name = "kubuno-seccomp"
-version = "0.1.1"
+version = "0.1.0"
+source = "git+https://github.com/kubuno/core?tag=seccomp-v0.1.0#77d736f5f7736ffddcc0519b3a4e0a4652df02e8"
 dependencies = [
  "libc",
  "tracing",

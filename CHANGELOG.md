@@ -9,6 +9,17 @@ number at release time, and CI publishes that section as the GitHub Release note
 
 ## [Unreleased]
 
+### Fixed
+
+- **The project builds again outside the maintainer's workspace.** Building
+  from a fresh clone — which is what CI and any contributor does — failed
+  immediately with `failed to load source for dependency kubuno-modauth`, and
+  the 0.2.0 tag therefore produced no release artifact at all. The workspace
+  manifest redirected the shared Kubuno crates to a sibling checkout of the
+  `core` repository, a path that exists only on a machine holding the whole
+  workspace. The crates are now resolved solely from their published git tags,
+  as in every other Kubuno repository.
+
 ## [0.2.0] - 2026-09-18
 
 ### Security
