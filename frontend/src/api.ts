@@ -21,6 +21,13 @@ export interface MyQuota {
   quota_bytes: number
   used_bytes: number
   available_bytes: number
+  /**
+   * True when no allocation exists yet for this account and `quota_bytes` is
+   * what the instance default WOULD grant on the first upload. It is an
+   * announcement, not a reservation: another account may be shown the same
+   * remaining capacity at the same moment.
+   */
+  provisional: boolean
 }
 
 export interface QuotaRow {

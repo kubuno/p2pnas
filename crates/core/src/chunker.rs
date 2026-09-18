@@ -7,8 +7,16 @@
 
 pub const DEFAULT_CHUNK_SIZE: usize = 4 * 1024 * 1024; // 4 MiB
 
-/// Fast zstd level used when the entropy probe says a chunk looks compressible.
-pub const FAST_ZSTD_LEVEL: i32 = 1;
+/// zstd level used when the entropy probe says a chunk looks compressible.
+///
+/// Level 3 rather than 1: this is a STORAGE codec, not a local benchmark. The
+/// entropy gate already skips incompressible chunks, so level 3 only runs where
+/// it pays off, and BENCHMARKS.md shows zstd-3 sustaining ~1.7 GiB/s — orders of
+/// magnitude above any real uplink — for ~10-15% better ratio than level 1 on
+/// compressible data. Every byte saved is a byte not stored on a host and not
+/// sent over the wire. Decompression is self-describing, so raising the level
+/// leaves every previously-stored chunk readable.
+pub const FAST_ZSTD_LEVEL: i32 = 3;
 
 /// Bytes of a chunk sampled to estimate entropy (cheap, cache-friendly).
 const ENTROPY_SAMPLE: usize = 16 * 1024;

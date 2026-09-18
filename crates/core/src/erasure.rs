@@ -16,6 +16,23 @@ fn shard_len(cipher_len: usize) -> usize {
     per.div_ceil(64) * 64
 }
 
+/// Filesystem block size assumed for storage accounting.
+///
+/// Each shard is stored as its OWN file, so it occupies whole filesystem blocks:
+/// a 128-byte shard still consumes a full 4 KiB block. Counting the logical shard
+/// length instead under-reports the real footprint by up to ~32× for tiny files,
+/// which let the node believe it had far more free capacity than it did — and let
+/// a host accept more than it could actually hold. 4096 is the near-universal
+/// default (ext4/xfs/btrfs); the correction matters for small shards, where the
+/// error was huge, and is negligible for large ones whatever the true block size.
+pub const STORAGE_BLOCK_SIZE: usize = 4096;
+
+/// Real bytes a shard of `shard_len` occupies on disk: its length rounded up to
+/// whole filesystem blocks, since every shard is a separate file.
+pub fn shard_disk_cost(shard_len: usize) -> usize {
+    shard_len.div_ceil(STORAGE_BLOCK_SIZE) * STORAGE_BLOCK_SIZE
+}
+
 /// Stripe `cipher` (ciphertext||tag) into `DATA_SHARDS` equal padded shards.
 fn data_shards(cipher: &[u8]) -> (Vec<Vec<u8>>, usize) {
     let sl = shard_len(cipher.len());
@@ -135,6 +152,20 @@ pub fn reconstruct(present: &[Option<Vec<u8>>], cipher_len: usize) -> Result<Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shard_disk_cost_rounds_up_to_blocks() {
+        // A tiny shard still costs a whole block — this is the ~32× under-count
+        // the accounting fix is about.
+        assert_eq!(shard_disk_cost(1), STORAGE_BLOCK_SIZE);
+        assert_eq!(shard_disk_cost(128), STORAGE_BLOCK_SIZE);
+        assert_eq!(shard_disk_cost(STORAGE_BLOCK_SIZE), STORAGE_BLOCK_SIZE);
+        assert_eq!(shard_disk_cost(STORAGE_BLOCK_SIZE + 1), 2 * STORAGE_BLOCK_SIZE);
+        // A full 4 MiB chunk's shard (~419 KiB) is already block-aligned enough
+        // that the correction is under 0.8%.
+        let big = shard_len(4 * 1024 * 1024 + 16);
+        assert!(shard_disk_cost(big) as f64 <= big as f64 * 1.008);
+    }
 
     #[test]
     fn roundtrip_with_four_losses() {

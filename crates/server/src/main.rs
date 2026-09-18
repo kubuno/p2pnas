@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use kubuno_p2pnas::{config::Settings, router, state::AppState};
 use reqwest::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
@@ -25,6 +25,71 @@ struct Manifest {
     #[serde(default)]
     sidebar_items: Vec<SidebarItemRaw>,
     events:        Option<ManifestEvents>,
+    /// Pages the admin panel is split into (`[[setting_groups]]`).
+    #[serde(default)]
+    setting_groups: Vec<SettingGroupRaw>,
+    /// Instance-wide knobs the admin console renders (`[[settings]]`).
+    #[serde(default)]
+    settings:       Vec<SettingDefRaw>,
+}
+
+/// One `[[setting_groups]]` entry of module.toml, forwarded verbatim so the core
+/// renders the admin sub-menus. `id` is a STABLE, UNTRANSLATED slug: it travels
+/// in the URL of the admin page.
+#[derive(Deserialize, Serialize)]
+struct SettingGroupRaw {
+    id:          String,
+    label:       String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    icon:        Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    position:    Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+}
+
+/// One `[[settings]]` entry of module.toml, forwarded verbatim: the core stores
+/// the schema and the admin console renders it, so every knob p2pnas exposes is
+/// described HERE and nowhere in the console's code.
+///
+/// Presentation metadata (`min`/`max`, `unit`, `multiline`, `advanced`, `risk`)
+/// is optional and only serialised when the manifest sets it — an omitted field
+/// must not reach the core as `null` and overwrite a sane default.
+#[derive(Deserialize, Serialize)]
+struct SettingDefRaw {
+    key:         String,
+    scope:       String,
+    #[serde(rename = "type")]
+    value_type:  String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    values:      Option<Value>,
+    default:     Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    label:       Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    category:    Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    group:       Option<String>,
+    #[serde(default)]
+    public:      bool,
+    #[serde(default)]
+    advanced:    bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    risk:        Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    min:         Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    max:         Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    unit:        Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    placeholder: Option<String>,
+    #[serde(default)]
+    multiline:   bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    depends_on:  Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -138,6 +203,13 @@ async fn main() -> Result<()> {
 
     let http = Client::new();
 
+    // Instance settings start at the compiled defaults; the first read from the
+    // core happens just after registration (the core only knows the schema once
+    // the module has declared it).
+    let instance = Arc::new(std::sync::RwLock::new(
+        kubuno_p2pnas::config::instance::InstanceConfig::default(),
+    ));
+
     let state = AppState {
         db:       pool,
         settings: Arc::new(settings.clone()),
@@ -145,10 +217,53 @@ async fn main() -> Result<()> {
         manifest,
         store,
         http:     http.clone(),
+        instance: instance.clone(),
     };
 
     // Register with the core (infinite retry) + heartbeat every 30s.
     register_with_core(&http, &settings).await;
+
+    // First read of the administrator's values, now that the core has the schema:
+    // the first upload and the first repair pass must already see them rather
+    // than the compiled defaults. A failed read simply leaves the defaults, which
+    // the refresher below will correct within a minute.
+    if let Some(cfg) = kubuno_p2pnas::config::instance::fetch(
+        &http,
+        &settings.core.url,
+        &settings.core.internal_secret,
+    )
+    .await
+    {
+        if let Ok(mut w) = instance.write() {
+            *w = cfg;
+        }
+    }
+
+    // Instance-settings refresher: an admin edit takes effect within a minute,
+    // no restart. A failed read keeps the last good values.
+    {
+        let http_refresh     = http.clone();
+        let settings_refresh = settings.clone();
+        let instance_refresh = instance.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                if let Some(cfg) = kubuno_p2pnas::config::instance::fetch(
+                    &http_refresh,
+                    &settings_refresh.core.url,
+                    &settings_refresh.core.internal_secret,
+                )
+                .await
+                {
+                    if let Ok(mut w) = instance_refresh.write() {
+                        *w = cfg;
+                    }
+                }
+            }
+        });
+    }
+
+    // Heartbeat every 30s.
     {
         let http2 = http.clone();
         let settings2 = settings.clone();
@@ -208,6 +323,9 @@ async fn main() -> Result<()> {
                     api_port: settings.server.port,
                     store:    state.store.clone(),
                     db:       state.db.clone(),
+                    // Lets this node answer a peer's identity challenge. Without it
+                    // we would demand proof from others while offering none.
+                    signer:   kubuno_p2pnas::p2p::node_signer(&state.identity),
                 });
                 tokio::spawn(p2pnas_p2p::serve(p2p_listener, handler));
             }
@@ -247,14 +365,77 @@ async fn main() -> Result<()> {
 
     // Periodic self-healing: enqueue a repair job (the worker runs it). Admin can
     // also trigger a pass on demand via POST /admin/repair.
+    //
+    // The delay is re-read at every iteration rather than baked into a fixed
+    // `interval`: shortening it in the console must speed the next pass up, not
+    // the one after a restart. A change therefore applies from the pass that
+    // follows the edit — the sleep already under way is not interrupted.
     {
-        let db = state.db.clone();
+        let st = state.clone();
         tokio::spawn(async move {
-            let mut tick = tokio::time::interval(Duration::from_secs(600));
-            tick.tick().await; // consume the immediate first tick
             loop {
-                tick.tick().await;
-                kubuno_p2pnas::jobs::enqueue(&db, "repair", serde_json::json!({})).await;
+                tokio::time::sleep(Duration::from_secs(st.instance().repair_interval_secs)).await;
+                kubuno_p2pnas::jobs::enqueue(&st.db, "repair", serde_json::json!({})).await;
+            }
+        });
+    }
+
+    // Retention / reciprocity sweep: reclaim space from long-absent owners, in
+    // graduated and reversible stages (see `retention`). Once a day is ample —
+    // the thresholds are in days — and it runs off the same worker queue.
+    {
+        let st = state.clone();
+        tokio::spawn(async move {
+            const DAY: u64 = 24 * 60 * 60;
+            loop {
+                tokio::time::sleep(Duration::from_secs(DAY)).await;
+                kubuno_p2pnas::jobs::enqueue(&st.db, "retention", serde_json::json!({})).await;
+            }
+        });
+    }
+
+    // Small-file packing + container compaction, every 6 hours. Repack first
+    // (regroup new tiny files), then compact (reclaim containers the retention
+    // sweep has hollowed out) — jobs coalesce, so this never piles up.
+    {
+        let st = state.clone();
+        tokio::spawn(async move {
+            const SIX_HOURS: u64 = 6 * 60 * 60;
+            tokio::time::sleep(Duration::from_secs(600)).await;
+            loop {
+                kubuno_p2pnas::jobs::enqueue(&st.db, "repack_small", serde_json::json!({})).await;
+                kubuno_p2pnas::jobs::enqueue(&st.db, "compact_packs", serde_json::json!({})).await;
+                tokio::time::sleep(Duration::from_secs(SIX_HOURS)).await;
+            }
+        });
+    }
+
+    // Distributed manifest backup: once a day. The version IS a day number, so a
+    // second pass on the same day is a no-op — and enqueuing BEFORE the sleep means
+    // a node restarted every day still gets backed up.
+    {
+        let st = state.clone();
+        tokio::spawn(async move {
+            const DAY: u64 = 24 * 60 * 60;
+            // Let the node probe its peers before the first snapshot.
+            tokio::time::sleep(Duration::from_secs(300)).await;
+            loop {
+                kubuno_p2pnas::jobs::enqueue(&st.db, "manifest_backup", serde_json::json!({})).await;
+                tokio::time::sleep(Duration::from_secs(DAY)).await;
+            }
+        });
+    }
+
+    // Trash / version retention: reclaim what has passed its window. Hourly is
+    // ample (the windows are in days) and the job coalesces, so a slow sweep can
+    // never pile up behind itself.
+    {
+        let st = state.clone();
+        tokio::spawn(async move {
+            const HOUR: u64 = 60 * 60;
+            loop {
+                tokio::time::sleep(Duration::from_secs(HOUR)).await;
+                kubuno_p2pnas::jobs::enqueue(&st.db, "gc_trash", serde_json::json!({})).await;
             }
         });
     }
@@ -301,6 +482,19 @@ async fn register_with_core(http: &Client, settings: &Settings) {
         .map(|e| e.subscribed.clone())
         .unwrap_or_else(|| vec!["UserDeleted".into()]);
 
+    // Admin surface. `setting_groups` are the pages of the sub-menu; `settings`
+    // are the instance-wide knobs the core renders inside them. Live DATA (quotas
+    // per user, peers, contribution, repair reports) is NOT a setting and stays in
+    // the module's own React sections, which the console shows above the form.
+    let setting_groups: Vec<Value> = manifest
+        .as_ref()
+        .map(|m| m.setting_groups.iter().map(|g| serde_json::to_value(g).unwrap_or(Value::Null)).collect())
+        .unwrap_or_default();
+    let settings_schema: Vec<Value> = manifest
+        .as_ref()
+        .map(|m| m.settings.iter().map(|s| serde_json::to_value(s).unwrap_or(Value::Null)).collect())
+        .unwrap_or_default();
+
     let payload = json!({
         "module_id":         MODULE_ID,
         "display_name":      display_name,
@@ -311,6 +505,10 @@ async fn register_with_core(http: &Client, settings: &Settings) {
         "routes":            [{ "method": "*", "path": "/*" }],
         "sidebar_items":     sidebar_items,
         "subscribed_events": subscribed_events,
+        "setting_groups":    setting_groups,
+        // The core's registration DTO names this field `settings_schema`; the
+        // manifest names the array `[[settings]]`. Same thing, two names.
+        "settings_schema":   settings_schema,
         "mcp_tools":         json!([]),
     });
 

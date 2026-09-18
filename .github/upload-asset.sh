@@ -1,27 +1,47 @@
 #!/usr/bin/env bash
 # Attach a built artifact to the GitHub Release for the current tag.
 #
-# The Release is created by a single workflow (build.yml, which ships the .deb).
-# Every other packaging job (rpm/windows/macos in dist.yml) only *uploads* to it,
-# so no two jobs ever race to create/finalize the same release. We wait for the
-# release to appear, then upload with --clobber (idempotent on re-runs).
+# This job does NOT depend on another workflow having created the release first.
+# It used to: it waited ten minutes for build.yml (which ships the .deb) and then
+# gave up with "release never appeared — build.yml likely failed". That message
+# was wrong and the failure was avoidable — on a repository whose .deb takes
+# longer than ten minutes to build, the release simply had not been created yet,
+# and a perfectly good package was thrown away. Four modules reached v0.1.6 with
+# missing packages that way.
+#
+# Instead, the release is created here when it is missing. Several jobs may reach
+# that point at once, so losing the race is expected and harmless: whoever loses
+# finds the release already there and uploads to it.
 set -euo pipefail
 
 glob="$1"                       # e.g. 'dist/*.rpm'
 tag="${GITHUB_REF_NAME}"
 repo="${GITHUB_REPOSITORY}"
 
-# Wait up to ~10 min for build.yml to create the release.
-for i in $(seq 1 60); do
+ensure_release() {
   if gh release view "$tag" -R "$repo" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "release $tag missing — creating it"
+  # --verify-tag: never invent a release for a tag that does not exist.
+  # A concurrent job may win this race; that is not an error.
+  if gh release create "$tag" -R "$repo" --verify-tag --title "$tag" --generate-notes >/dev/null 2>&1; then
+    return 0
+  fi
+  sleep 5
+  gh release view "$tag" -R "$repo" >/dev/null 2>&1
+}
+
+for i in $(seq 1 5); do
+  if ensure_release; then
     break
   fi
-  echo "waiting for release $tag to be created by build.yml ($i/60)…"
+  echo "release $tag not available yet ($i/5)…"
   sleep 10
 done
 
 if ! gh release view "$tag" -R "$repo" >/dev/null 2>&1; then
-  echo "::error::release $tag never appeared — build.yml likely failed" >&2
+  echo "::error::release $tag could not be created or found" >&2
   exit 1
 fi
 

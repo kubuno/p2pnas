@@ -1,0 +1,78 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }   # full history: build id needs the commit count
+
+      # ── Backend (Rust) ──
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo build
+        env:
+          SQLX_OFFLINE: "true"   # requêtes runtime : pas de DB requise (cache .sqlx si présent)
+        run: cargo build --release --bin kubuno-p2pnas
+
+      # ── Frontend (bundle du module) ──
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      # ── Paquet Kubuno (.kbpkg) ──
+      # The one format a module ships and the server installs, identical on
+      # every system: built from the binary and frontend produced above, and
+      # unpacked by the server with no external tool — same install on Linux,
+      # Windows and macOS. No Debian package is produced any more.
+      - name: build .kbpkg
+        run: bash build_kbpkg.sh --skip-build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kubuno-p2pnas-kbpkg
+          path: dist/*.kbpkg
+      # Release notes come from CHANGELOG.md (section stamped by _tools/release.sh),
+      # not from a commit summary: they are written when the change is made.
+      - name: extract release notes
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          python3 - "${GITHUB_REF_NAME#v}" << 'PY'
+          import re, sys, pathlib
+          version = sys.argv[1]
+          src = pathlib.Path('CHANGELOG.md')
+          notes = ''
+          if src.exists():
+              text = src.read_text(encoding='utf-8')
+              m = re.search(rf'^## \[{re.escape(version)}\][^\n]*$', text, re.M)
+              if m:
+                  rest = text[m.end():]
+                  nxt = re.search(r'^## \[', rest, re.M)
+                  chunk = rest[:nxt.start()] if nxt else rest
+                  # Drop the trailing reference-link block ([1.2.3]: https://…)
+                  notes = re.sub(r'(?m)^\[[^\]]+\]:\s*http\S*$', '', chunk).strip()
+          pathlib.Path('RELEASE_NOTES.md').write_text(notes, encoding='utf-8')
+          print(notes or '(no notes for this version)')
+          PY
+
+      # ── Release (sur tag) ──
+      - name: release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.kbpkg
+          body_path: RELEASE_NOTES.md

@@ -23,7 +23,7 @@ use p2pnas_core::{
 /// New pipeline run SEQUENTIALLY (entropy-gate + aws-lc in-place + RS), no rayon,
 /// no upfront split copy — isolates "is parallelism the regression?".
 fn new_seq(data: &[u8], key: &DataKey, cfg: PipelineConfig) {
-    let sealer = key.file_subkey(b"f").sealer().unwrap();
+    let sealer = key.file_subkey(b"f").unwrap().sealer().unwrap();
     for (i, chunk) in data.chunks(cfg.chunk_size).enumerate() {
         let (mut buf, _c) = maybe_compress(chunk.to_vec(), cfg.entropy_skip, cfg.zstd_level);
         sealer.seal(&mut buf, i as u64).unwrap();
@@ -33,7 +33,7 @@ fn new_seq(data: &[u8], key: &DataKey, cfg: PipelineConfig) {
 
 /// Sequential, but WITHOUT erasure — isolates the cost of the RS striping copies.
 fn new_seq_no_rs(data: &[u8], key: &DataKey, cfg: PipelineConfig) {
-    let sealer = key.file_subkey(b"f").sealer().unwrap();
+    let sealer = key.file_subkey(b"f").unwrap().sealer().unwrap();
     for (i, chunk) in data.chunks(cfg.chunk_size).enumerate() {
         let (mut buf, _c) = maybe_compress(chunk.to_vec(), cfg.entropy_skip, cfg.zstd_level);
         sealer.seal(&mut buf, i as u64).unwrap();
@@ -61,7 +61,7 @@ fn bench_aead(c: &mut Criterion) {
     let plain = incompressible(4 * MIB);
 
     let key = DataKey::random();
-    let sealer = key.file_subkey(b"bench").sealer().unwrap();
+    let sealer = key.file_subkey(b"bench").unwrap().sealer().unwrap();
     g.bench_function("aws-lc-rs in-place", |b| {
         b.iter_batched(
             || plain.clone(),

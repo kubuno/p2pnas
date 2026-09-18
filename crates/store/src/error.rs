@@ -12,6 +12,8 @@ pub enum StoreError {
     NotFound,
     #[error("integrity error: {0}")]
     Integrity(String),
+    #[error("invalid fragment id")]
+    InvalidFragmentId,
 }
 
 pub type Result<T> = std::result::Result<T, StoreError>;

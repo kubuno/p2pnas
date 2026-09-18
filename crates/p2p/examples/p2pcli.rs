@@ -17,6 +17,8 @@ async fn main() {
         "store" => P2pMessage::StoreShard {
             fragment_id: a[3].clone(),
             owner_peer_id: "cli".into(),
+            // Unknown from a bare CLI: -1 means "index not supplied".
+            shard_index: -1,
             data: a[4].clone().into_bytes(),
         },
         "get" => P2pMessage::GetShard { fragment_id: a[3].clone() },

@@ -15,6 +15,8 @@ rusqlite = { version = "0.31", features = ["bundled-sqlcipher-vendored-openssl"]
 blake3    = "1"
 hex       = "0.4"
 rand      = "0.8"
+# Passphrase → key derivation for the cold-storage backup bundle (Argon2id).
+argon2    = "0.5"
 thiserror = "1"
 tracing   = "0.1"
 chrono    = { version = "0.4", features = ["serde"] }

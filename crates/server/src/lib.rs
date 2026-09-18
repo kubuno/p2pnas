@@ -1,13 +1,17 @@
 pub mod config;
 pub mod discovery;
 pub mod errors;
+pub mod events;
 pub mod handlers;
 pub mod jobs;
+pub mod manifest_backup;
 pub mod maps_geoip;
 pub mod middleware;
 pub mod p2p;
 pub mod placement;
+pub mod quotas;
 pub mod rebalance;
 pub mod repair;
+pub mod retention;
 pub mod router;
 pub mod state;

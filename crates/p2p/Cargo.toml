@@ -16,6 +16,10 @@ async-trait = "0.1"
 tracing     = "0.1"
 # 160-bit Kademlia node IDs derived from the peer_id.
 blake3      = "1"
+# Ed25519 for the peer handshake challenge (same provider as the content crypto,
+# so the node ships a single, constant-time, FIPS-validatable implementation).
+aws-lc-rs   = { workspace = true }
+hex         = "0.4"
 
 [dev-dependencies]
 tokio   = { version = "1", features = ["full"] }

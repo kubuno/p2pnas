@@ -1,13 +1,136 @@
-use axum::{extract::State, Json};
+use axum::{
+    body::Bytes,
+    extract::{Query, State},
+    http::header,
+    response::{IntoResponse, Response},
+    Json,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{
     errors::{P2pError, Result},
-    repair,
+    manifest_backup, repair,
     state::AppState,
 };
+
+#[derive(Deserialize)]
+pub struct BackupParams {
+    pub passphrase: String,
+}
+
+/// `GET /admin/backup?passphrase=…` — download an encrypted cold-storage bundle
+/// {identity + manifest snapshot}. The admin keeps it OFF the node; it is the
+/// only thing that can bring a dead node back, so the response is never cached.
+pub async fn backup_export(
+    State(st): State<AppState>,
+    Query(p): Query<BackupParams>,
+) -> Result<Response> {
+    let data_dir = std::path::PathBuf::from(&st.settings.storage.data_dir);
+    let (man, pass) = (st.manifest.clone(), p.passphrase);
+    let blob = tokio::task::spawn_blocking(move || p2pnas_store::backup::export(&data_dir, &man, &pass))
+        .await
+        .map_err(|_| P2pError::BadRequest("backup task failed".into()))?
+        .map_err(|e| P2pError::BadRequest(e.to_string()))?;
+
+    let filename = format!("p2pnas-backup-{}.kbbak", chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/octet-stream".to_string()),
+            (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{filename}\"")),
+            (header::CACHE_CONTROL, "no-store".to_string()),
+        ],
+        blob,
+    )
+        .into_response())
+}
+
+/// `POST /admin/restore?passphrase=…` with the bundle as the raw request body —
+/// recover onto a FRESH node. Refuses if this node already holds data. The module
+/// must be restarted afterwards to load the restored identity and manifest.
+pub async fn backup_restore(
+    State(st): State<AppState>,
+    Query(p): Query<BackupParams>,
+    body: Bytes,
+) -> Result<Json<Value>> {
+    let data_dir = std::path::PathBuf::from(&st.settings.storage.data_dir);
+    let (man, pass, blob) = (st.manifest.clone(), p.passphrase, body.to_vec());
+    tokio::task::spawn_blocking(move || p2pnas_store::backup::import(&data_dir, &man, &pass, &blob))
+        .await
+        .map_err(|_| P2pError::BadRequest("restore task failed".into()))?
+        .map_err(|e| P2pError::BadRequest(e.to_string()))?;
+
+    Ok(Json(json!({
+        "restored": true,
+        "note": "restart the p2pnas module to load the restored identity and manifest, then run a repair"
+    })))
+}
+
+/// `GET /admin/manifest-backup` — state of the AUTOMATIC distributed backup: the
+/// versions this node believes it has pushed onto its peers, most recent first.
+///
+/// Informational only. The restore never trusts this list — it re-derives the
+/// fragment ids and asks the peers — but it is what tells an administrator, at a
+/// glance, whether the safety net is actually being woven.
+pub async fn manifest_backup_status(State(st): State<AppState>) -> Result<Json<Value>> {
+    Ok(Json(json!({
+        "current_version": p2pnas_store::backup::manifest_backup_version_now(),
+        "recent": manifest_backup::recorded_versions(&st, 20).await,
+    })))
+}
+
+/// `POST /admin/manifest-backup` — run the distributed backup now instead of
+/// waiting for the daily ticker. Enqueued rather than executed inline: vacuuming
+/// and uploading a large manifest is not something to hold an HTTP request open
+/// for, and the job kind coalesces so a double click costs nothing.
+pub async fn manifest_backup_now(State(st): State<AppState>) -> Result<Json<Value>> {
+    crate::jobs::enqueue(&st.db, "manifest_backup", json!({ "reason": "manual" })).await;
+    Ok(Json(json!({ "enqueued": "manifest_backup" })))
+}
+
+#[derive(Deserialize, Default)]
+pub struct ManifestRestoreBody {
+    /// Peer addresses (`ip:port`) to interrogate, merged with `p2pnas.peers`.
+    ///
+    /// Required when the control-plane database went down with the node: without
+    /// at least one peer there is nobody to ask, whatever the node key can
+    /// compute. They are ordinary public addresses — nothing secret to keep.
+    #[serde(default)]
+    pub peers:         Vec<String>,
+    /// Restore one specific day number instead of the most recent recoverable
+    /// one (used to step back past a manifest that was already damaged).
+    #[serde(default)]
+    pub version:       Option<u64>,
+    /// How many days back to scan when `version` is absent.
+    #[serde(default)]
+    pub lookback_days: Option<u64>,
+}
+
+/// `POST /admin/manifest-backup/restore` — rebuild `manifest.db` from the shards
+/// held by the peers, on a fresh node that has `identity.key` back.
+///
+/// Refuses on a node that already holds files. Runs inline: the administrator is
+/// waiting on the answer, and a restore happens once in a node's life.
+pub async fn manifest_backup_restore(
+    State(st): State<AppState>,
+    body: Bytes,
+) -> Result<Json<Value>> {
+    // Taken as raw bytes rather than `Json<…>` so an EMPTY post is legitimate: on
+    // a node whose control plane survived, the peer table alone is enough to find
+    // the shards, and there is nothing for the administrator to type.
+    let params: ManifestRestoreBody = if body.is_empty() {
+        ManifestRestoreBody::default()
+    } else {
+        serde_json::from_slice(&body).map_err(|e| P2pError::BadRequest(format!("corps JSON invalide: {e}")))?
+    };
+    let out = manifest_backup::restore(&st, &params.peers, params.version, params.lookback_days).await?;
+    let out = serde_json::to_value(&out).unwrap_or_default();
+    Ok(Json(json!({
+        "restored": out,
+        "note": "restart the p2pnas module to reopen the restored manifest, then run a repair"
+    })))
+}
 
 /// List every user's quota (admin only).
 pub async fn list_quotas(State(st): State<AppState>) -> Result<Json<Value>> {
@@ -113,6 +236,12 @@ pub struct AddPeer {
     /// once it answers a liveness probe.
     #[serde(default)]
     pub peer_id: Option<String>,
+    /// Extra days of retention this node grants THIS peer on top of the instance
+    /// policy — how generous we choose to be with someone we know (a machine we
+    /// know is often powered off, say). Omitted leaves the current value; posting
+    /// the same peer again is how an operator adjusts it.
+    #[serde(default)]
+    pub threshold_days: Option<i32>,
 }
 
 /// Add a trusted peer (admin only). By default it handshakes the peer over P2P
@@ -124,27 +253,60 @@ pub async fn add_peer(State(st): State<AppState>, Json(body): Json<AddPeer>) -> 
         return Err(P2pError::BadRequest("addr requis (ip:port)".into()));
     }
 
-    let (peer_id, api_port, status) = match body.peer_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        Some(pid) => (pid.to_string(), 0u16, "down"), // offline registration, no handshake
-        None => {
-            let (pid, api) = p2pnas_p2p::handshake(&addr, &st.identity.peer_id, st.settings.server.port)
-                .await
-                .map_err(|e| P2pError::BadRequest(format!("handshake échoué: {e}")))?;
-            (pid, api, "active")
-        }
-    };
+    // `handshake_verified` rather than `handshake`: a peer added by hand is exactly
+    // the one whose key we most want pinned, and pinning only happens on a
+    // handshake WE initiate. A peer too old to prove itself still registers, with
+    // no key — it simply stays unpinned until it can.
+    let (peer_id, api_port, status, public_key) =
+        match body.peer_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            // Offline registration: no handshake, so nothing to prove yet.
+            Some(pid) => (pid.to_string(), 0u16, "down", None),
+            None => {
+                let peer = p2pnas_p2p::handshake_verified(&addr, &st.identity.peer_id, st.settings.server.port)
+                    .await
+                    .map_err(|e| P2pError::BadRequest(format!("handshake échoué: {e}")))?;
+                (peer.peer_id, peer.api_port, "active", peer.public_key)
+            }
+        };
 
-    sqlx::query(
-        "INSERT INTO p2pnas.peers (peer_id, addr, status, last_seen) VALUES ($1, $2, $3, now())
-         ON CONFLICT (peer_id) DO UPDATE SET addr = EXCLUDED.addr, last_seen = now()",
+    // Generosity is clamped to a sane range: it may only ever ADD retention time,
+    // and a decade is well past any plausible intent.
+    let generosity = body.threshold_days.map(|d| d.clamp(0, 3650));
+
+    // Same hijack guard as discovery: an update is refused if a different key is
+    // already pinned for this peer_id. `COALESCE` on the key means a peer that
+    // could not prove itself never erases a key we already trust.
+    let updated = sqlx::query(
+        "INSERT INTO p2pnas.peers (peer_id, addr, status, last_seen, threshold_days, public_key, verified_at)
+         VALUES ($1, $2, $3, now(), COALESCE($4, 7), $5::text,
+                 CASE WHEN $5::text IS NULL THEN NULL ELSE now() END)
+         ON CONFLICT (peer_id) DO UPDATE SET
+             addr = EXCLUDED.addr,
+             last_seen = now(),
+             threshold_days = COALESCE($4, peers.threshold_days),
+             public_key = COALESCE(peers.public_key, EXCLUDED.public_key),
+             verified_at = CASE WHEN EXCLUDED.public_key IS NULL THEN peers.verified_at ELSE now() END
+         WHERE peers.public_key IS NULL OR peers.public_key IS NOT DISTINCT FROM EXCLUDED.public_key",
     )
     .bind(&peer_id)
     .bind(&addr)
     .bind(status)
+    .bind(generosity)
+    .bind(public_key.as_deref())
     .execute(&st.db)
     .await?;
 
-    Ok(Json(json!({ "peer_id": peer_id, "addr": addr, "api_port": api_port, "status": status })))
+    if updated.rows_affected() == 0 {
+        tracing::warn!(peer_id, addr, "add_peer refused: a different public key is pinned for this peer");
+        return Err(P2pError::BadRequest(
+            "ce pair est déjà enregistré avec une autre clé publique — vérifiez l'adresse".into(),
+        ));
+    }
+
+    Ok(Json(json!({
+        "peer_id": peer_id, "addr": addr, "api_port": api_port, "status": status,
+        "threshold_days": generosity, "proven": public_key.is_some(),
+    })))
 }
 
 /// Trigger a node-wide self-healing repair pass (admin only): probe peer
@@ -233,9 +395,9 @@ pub async fn remove_peer(
 
 /// List trusted peers (admin only).
 pub async fn list_peers(State(st): State<AppState>) -> Result<Json<Value>> {
-    type Row = (String, String, f64, i64, Option<chrono::DateTime<chrono::Utc>>, Option<f64>, Option<String>);
+    type Row = (String, String, f64, i64, Option<chrono::DateTime<chrono::Utc>>, Option<f64>, Option<String>, i32);
     let rows: Vec<Row> = sqlx::query_as(
-        "SELECT peer_id, addr, reliability_score, contributed_bytes, last_seen, rtt_ms, country
+        "SELECT peer_id, addr, reliability_score, contributed_bytes, last_seen, rtt_ms, country, threshold_days
          FROM p2pnas.peers ORDER BY reliability_score DESC, peer_id",
     )
     .fetch_all(&st.db)
@@ -243,7 +405,7 @@ pub async fn list_peers(State(st): State<AppState>) -> Result<Json<Value>> {
 
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(peer_id, addr, score, contributed, last_seen, rtt_ms, country)| {
+        .map(|(peer_id, addr, score, contributed, last_seen, rtt_ms, country, threshold_days)| {
             json!({
                 "peer_id": peer_id,
                 "addr": addr,
@@ -252,6 +414,8 @@ pub async fn list_peers(State(st): State<AppState>) -> Result<Json<Value>> {
                 "last_seen": last_seen.map(|t| t.to_rfc3339()),
                 "rtt_ms": rtt_ms,
                 "country": country,
+                // Extra retention days this node grants that peer (see `retention`).
+                "threshold_days": threshold_days,
             })
         })
         .collect();

@@ -6,6 +6,7 @@ resolver = "2"
 # (in production this resolves from the git tag declared in crates/server).
 [patch."https://github.com/kubuno/core"]
 kubuno-seccomp = { path = "../core/crates/kubuno-seccomp" }
+kubuno-modauth = { path = "../core/crates/kubuno-modauth" }
 
 [workspace.package]
 version = "0.1.0"

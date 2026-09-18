@@ -1,7 +1,11 @@
-name: Distributions (RPM / Windows / macOS)
+name: Distributions (.kbpkg Windows / macOS)
 
-# Paquets natifs du module, attachés à la Release GitHub sur tag v*.
-# Complète build.yml (qui produit le .deb).
+# Paquet Kubuno (.kbpkg) du module pour Windows et macOS, attaché à la Release
+# GitHub sur tag v*. Complète build.yml (qui produit le .kbpkg Linux).
+#
+# Un module s'empaquette et s'installe UNIQUEMENT au format .kbpkg — le seul que
+# le serveur déballe sans outil externe, donc le seul identique sur les trois
+# systèmes. Les paquets natifs (.rpm/.exe/.pkg) ne sont plus produits.
 on:
   push:
     tags: ['v*']
@@ -11,65 +15,39 @@ permissions:
   contents: write
 
 jobs:
-  rpm:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }   # full history: build id needs the commit count
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-node@v4
-        with: { node-version: 24 }
-      - run: sudo apt-get update && sudo apt-get install -y rpm
-      - run: cd frontend && npm ci && npm run build
-        if: hashFiles('frontend/package.json') != ''
-      - run: bash build_rpm.sh
-        env: { SQLX_OFFLINE: "true" }
-      - uses: actions/upload-artifact@v4
-        with: { name: rpm, path: dist/*.rpm }
-      - if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with: { files: dist/*.rpm }
-
   windows:
     runs-on: windows-latest
     defaults: { run: { shell: bash } }
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }   # full history: build id needs the commit count
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: x86_64-pc-windows-msvc }
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
-      - run: choco install nsis -y --no-progress
-      - run: echo "C:/Program Files (x86)/NSIS" >> "$GITHUB_PATH"
-      - run: if [ -f frontend/package.json ]; then cd frontend && npm ci && npm run build; fi
-      - run: bash build_windows.sh
-        env: { SQLX_OFFLINE: "true" }
+      # build_kbpkg.sh compile le binaire (cross msvc via TARGET) + le frontend,
+      # puis empaquette. Le serveur sait déballer ce ZIP sans outil externe.
+      - run: bash build_kbpkg.sh
+        env: { SQLX_OFFLINE: "true", OS: windows, ARCH: x86_64, TARGET: x86_64-pc-windows-msvc }
       - uses: actions/upload-artifact@v4
-        with: { name: windows, path: dist/*.exe }
+        with: { name: windows, path: dist/*.kbpkg }
       - if: startsWith(github.ref, 'refs/tags/')
-        name: upload to release
-        env: { GH_TOKEN: '${{ github.token }}' }
-        run: bash .github/upload-asset.sh 'dist/*.exe'
+        uses: softprops/action-gh-release@v2
+        with: { files: dist/*.kbpkg }
 
   macos:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }   # full history: build id needs the commit count
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: aarch64-apple-darwin }
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
-      - run: if [ -f frontend/package.json ]; then cd frontend && npm ci && npm run build; fi
-      - run: bash build_macos.sh
-        env: { SQLX_OFFLINE: "true" }
+      - run: bash build_kbpkg.sh
+        env: { SQLX_OFFLINE: "true", OS: macos, ARCH: aarch64, TARGET: aarch64-apple-darwin }
       - uses: actions/upload-artifact@v4
-        with: { name: macos, path: dist/*.pkg }
+        with: { name: macos, path: dist/*.kbpkg }
       - if: startsWith(github.ref, 'refs/tags/')
-        name: upload to release
-        env: { GH_TOKEN: '${{ github.token }}' }
-        run: bash .github/upload-asset.sh 'dist/*.pkg'
+        uses: softprops/action-gh-release@v2
+        with: { files: dist/*.kbpkg }

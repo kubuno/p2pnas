@@ -16,9 +16,9 @@ admins allocate per-user quotas. Successor to the standalone `ptopnas` project.
 ## Layout
 ```
 crates/core      performance core: chunker, crypto, erasure, pipeline (P0)
-crates/server    Kubuno module: Axum API, registers with core on :3119 (P1)
+crates/server    Kubuno module: Axum API on :3123, registers with the core (P1)
 migrations/      PostgreSQL p2pnas schema
-module.toml      module descriptor (id, port 3119, sidebar, events)
+module.toml      module descriptor (id, port 3123, admin pages, events)
 BENCHMARKS.md    P0 performance findings
 ```
 

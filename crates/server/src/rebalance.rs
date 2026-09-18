@@ -31,16 +31,18 @@ pub async fn rebalance_all(st: &AppState) -> RebalanceReport {
 
     // Live peers (excluding 'down'), measured fresh and sorted near → far so the
     // plan's peer indices line up with ascending latency.
-    let candidates: Vec<(String, String)> =
-        sqlx::query_as("SELECT peer_id, addr FROM p2pnas.peers WHERE peer_id <> $1 AND status <> 'down'")
-            .bind(&st.identity.peer_id)
-            .fetch_all(&st.db)
-            .await
-            .unwrap_or_default();
-    let mut live: Vec<(String, String, f64)> = Vec::new();
-    for (pid, addr) in candidates {
+    let candidates: Vec<(String, String, Option<String>, f64)> = sqlx::query_as(
+        "SELECT peer_id, addr, zone, reliability_score
+           FROM p2pnas.peers WHERE peer_id <> $1 AND status <> 'down'",
+    )
+    .bind(&st.identity.peer_id)
+    .fetch_all(&st.db)
+    .await
+    .unwrap_or_default();
+    let mut live: Vec<(String, String, f64, Option<String>, f64)> = Vec::new();
+    for (pid, addr, zone, rel) in candidates {
         if let Ok(rtt) = p2pnas_p2p::ping_rtt(&addr, &st.identity.peer_id, st.settings.server.port).await {
-            live.push((pid, addr, rtt));
+            live.push((pid, addr, rtt, zone, rel));
         }
     }
     live.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
@@ -48,12 +50,24 @@ pub async fn rebalance_all(st: &AppState) -> RebalanceReport {
     if live.is_empty() {
         return rep; // nothing to rebalance onto
     }
-    let reachable: HashMap<String, String> = live.iter().map(|(p, a, _)| (p.clone(), a.clone())).collect();
-    let sorted_ids: Vec<String> = live.iter().map(|(p, _, _)| p.clone()).collect();
-    let rtts: Vec<f64> = live.iter().map(|(_, _, r)| *r).collect();
+    let reachable: HashMap<String, String> = live.iter().map(|(p, a, ..)| (p.clone(), a.clone())).collect();
+    let sorted_ids: Vec<String> = live.iter().map(|(p, ..)| p.clone()).collect();
 
     // Ideal layout (same for every chunk): shard index i → location.
-    let layout = placement::plan_placement(&rtts, TOTAL_SHARDS, PARITY_SHARDS);
+    //
+    // This MUST use the same zone-aware rule as the initial placement. With the
+    // latency-only plan, every rebalance pass would pull shards back onto the
+    // nearest neighbours — undoing the failure-domain spread it had just been
+    // given, and moving data across the network forever to do it.
+    let peer_candidates: Vec<placement::PeerCandidate> = live
+        .iter()
+        .map(|(_, addr, rtt, zone, rel)| placement::PeerCandidate {
+            rtt_ms:      *rtt,
+            zone:        zone.clone().or_else(|| placement::zone_of_addr(addr)),
+            reliability: *rel,
+        })
+        .collect();
+    let layout = placement::plan_placement_zoned(&peer_candidates, None, TOTAL_SHARDS, PARITY_SHARDS);
 
     let man = st.manifest.clone();
     let files = match tokio::task::spawn_blocking(move || p2pnas_store::service::list_all(&man)).await {
@@ -148,7 +162,7 @@ async fn move_shard(
     if !s.hash.is_empty() && p2pnas_p2p::content_hash(&bytes) != s.hash {
         return false;
     }
-    if !repair::place_shard(st, reachable, dest, &s.fragment_id, &bytes).await {
+    if !repair::place_shard(st, reachable, dest, &s.fragment_id, s.shard_index as i32, &bytes).await {
         return false;
     }
     let (m, frag, loc) = (st.manifest.clone(), s.fragment_id.clone(), dest.to_string());

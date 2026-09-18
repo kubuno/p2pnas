@@ -1,0 +1,53 @@
+name: Checks
+
+# Security & quality gate (ISO/IEC 27001 A.8.29 secure testing, A.8.8 vuln mgmt).
+# Complements build.yml (which only compiles): runs clippy -D warnings, the test
+# suites, a dependency-vulnerability audit, and the frontend typecheck/tests.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    env:
+      SQLX_OFFLINE: "true"
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: clippy }
+      - uses: Swatinem/rust-cache@v2
+      # clippy --all-targets also compiles the test code (catching test
+      # build breakage). Running the backend suites needs a Postgres service
+      # per repo — wired as a follow-up.
+      - name: clippy (deny warnings)
+        run: cargo clippy --all-targets -- -D warnings
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with: { tool: cargo-audit }
+      - name: cargo audit
+        run: cargo audit
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - name: install
+        run: npm ci
+      - name: typecheck (tsc -b)
+        run: npx tsc -b
+      - name: unit tests (vitest)
+        run: npx vitest run --passWithNoTests

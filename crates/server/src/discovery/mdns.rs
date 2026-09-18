@@ -36,11 +36,19 @@ pub async fn run(db: PgPool, identity: Arc<NodeIdentity>, api_port: u16, p2p_por
     };
     tracing::info!("mDNS: browsing {SERVICE_TYPE} for peers");
 
+    // Our own service name, matched EXACTLY below. A substring match would both
+    // hide a legitimate peer whose id happens to contain ours and let a hostile
+    // announcement make itself invisible by embedding our id in its own name.
+    let my_fullname = format!("{}.{SERVICE_TYPE}", identity.peer_id);
+
     loop {
         match receiver.recv_async().await {
             Ok(ServiceEvent::ServiceResolved(info)) => {
                 // Ignore our own announcement early (instance name == peer_id).
-                if info.get_fullname().contains(&*identity.peer_id) {
+                // The handshake in `register_peer` is the authoritative "is it
+                // me?" test; this only saves a pointless round-trip.
+                let announced = info.get_property_val_str("peer_id");
+                if info.get_fullname() == my_fullname || announced == Some(&*identity.peer_id) {
                     continue;
                 }
                 // A service can advertise several interface addresses (LAN, docker,

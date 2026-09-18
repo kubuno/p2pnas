@@ -20,7 +20,7 @@ struct FileHost {
 impl ShardHandler for FileHost {
     fn peer_id(&self) -> String { self.id.clone() }
     fn api_port(&self) -> u16 { 0 }
-    async fn store(&self, fragment_id: &str, _o: &str, data: Vec<u8>) -> bool {
+    async fn store(&self, fragment_id: &str, _o: &str, _shard_index: i32, data: Vec<u8>) -> bool {
         let _ = std::fs::create_dir_all(&self.dir);
         std::fs::write(self.dir.join(fragment_id), data).is_ok()
     }

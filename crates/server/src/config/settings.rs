@@ -50,13 +50,27 @@ pub struct ServerSettings {
     pub port: u16,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+// `Debug` is implemented by hand for the two secret-bearing config structs
+// rather than derived: a single `tracing::debug!(?settings)` or a `{:?}` in an
+// error chain would otherwise spill `internal_secret` and the database password
+// (and the DB URL, which embeds the password) into the logs. The redacting impls
+// keep the rest of the fields visible for diagnostics.
+#[derive(Clone, Deserialize)]
 pub struct CoreSettings {
     pub url:             String,
     pub internal_secret: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+impl std::fmt::Debug for CoreSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CoreSettings")
+            .field("url", &self.url)
+            .field("internal_secret", &"***")
+            .finish()
+    }
+}
+
+#[derive(Clone, Deserialize)]
 pub struct DatabaseSettings {
     pub url:             Option<String>,
     pub host:            Option<String>,
@@ -69,6 +83,24 @@ pub struct DatabaseSettings {
     #[serde(with = "duration_secs")]
     pub connect_timeout: Duration,
     pub run_migrations:  bool,
+}
+
+impl std::fmt::Debug for DatabaseSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `url` embeds the password (postgres://user:pass@host), so redact it too.
+        f.debug_struct("DatabaseSettings")
+            .field("url", &self.url.as_ref().map(|_| "***"))
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("user", &self.user)
+            .field("password", &self.password.as_ref().map(|_| "***"))
+            .field("database", &self.database)
+            .field("max_connections", &self.max_connections)
+            .field("min_connections", &self.min_connections)
+            .field("connect_timeout", &self.connect_timeout)
+            .field("run_migrations", &self.run_migrations)
+            .finish()
+    }
 }
 
 impl DatabaseSettings {

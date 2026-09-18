@@ -8,7 +8,9 @@ description  = "Stockage pair-à-pair chiffré et auto-réparant (montage « My 
 author       = "Kubuno Contributors"
 license      = "AGPL-3.0"
 runtime      = "rust"
-settings_path = "/p2pnas/settings"
+# No settings_path: p2pnas has no per-user settings. Everything it exposes
+# (node status, quotas, peers, durability) is instance administration and lives
+# in the admin console below, not in a user-facing settings page.
 
 [process]
 entrypoint = "kubuno-p2pnas"
@@ -26,8 +28,169 @@ patterns = [
 # No sidebar_items / launcher app on purpose: p2pnas is a storage backend. Its
 # "My Cloud" surface appears inside Drive as a mount (see the frontend).
 
+# Admin console sub-menus (Modules ▸ p2pnas). `id` is a stable slug used in the
+# admin page URL.
+#
+# Each page carries two kinds of content, and they are NOT interchangeable:
+#   * live module DATA and operations (per-user quotas, contribution, peer list,
+#     repair reports) — custom React views registered by the frontend, which the
+#     console renders ABOVE the form;
+#   * instance POLICY — the scalar knobs in the [[settings]] blocks below, which
+#     the console renders from the schema alone.
+# Every setting is filed under the group whose data it governs, so the figure and
+# the rule that produces it are read on the same page. `overview` deliberately
+# carries none: it is a dashboard.
+[[setting_groups]]
+id       = "overview"
+label    = "Vue d'ensemble"
+icon     = "HardDrive"
+position = 10
+
+[[setting_groups]]
+id       = "quotas"
+label    = "Quotas & contribution"
+icon     = "Users"
+position = 20
+
+[[setting_groups]]
+id       = "peers"
+label    = "Pairs"
+icon     = "Radar"
+position = 30
+
+[[setting_groups]]
+id       = "maintenance"
+label    = "Durabilité & réparation"
+icon     = "ShieldCheck"
+position = 40
+
+[[setting_groups]]
+id       = "retention"
+label    = "Conservation & réciprocité"
+icon     = "Timer"
+position = 50
+
+# ── Instance policy (scope = global: administrator only) ──────────────────────
+# Sizes are in BYTES, the unit the code compares against — no hidden conversion
+# between what is typed here and what is checked.
+
+[[settings]]
+key         = "default_quota_bytes"
+scope       = "global"
+type        = "int"
+default     = 0
+min         = 0
+max         = 1099511627776
+unit        = "octets"
+label       = "Quota par défaut d'un nouveau compte"
+description = "Espace « My Cloud » accordé automatiquement à un compte qui n'a jamais été alloué à la main. 0 (défaut) conserve le comportement historique : tant qu'un administrateur n'a pas alloué d'espace, tout envoi est refusé. Le quota est matérialisé comme une vraie ligne d'allocation au premier envoi du compte, plafonné par la capacité contribuée encore libre à cet instant : il est donc toujours adossé à du stockage réel, il apparaît dans la liste des quotas ci-dessus, et il est compté par les garde-fous « la somme des quotas ne dépasse pas la contribution » et « la contribution ne descend pas sous l'alloué ». Si plus rien n'est disponible, aucune allocation n'est faite et l'envoi est refusé — une promesse non couverte serait pire qu'un refus."
+category    = "Politique de stockage"
+group       = "quotas"
+risk        = "warning"
+
+[[settings]]
+key         = "max_upload_bytes"
+scope       = "global"
+type        = "int"
+default     = 2147483648
+min         = 1048576
+max         = 2147483648
+unit        = "octets"
+label       = "Taille maximale d'un envoi"
+description = "Plafond appliqué à chaque fichier envoyé, vérifié requête par requête : un changement prend effet sans redémarrer le module. Le plafond de transport du serveur HTTP est fixé à 2 Gio à la construction du routeur ; ce réglage ne peut donc que descendre en dessous, jamais au-delà. Chaque fichier est chiffré et encodé entièrement en mémoire : un plafond élevé se paie en mémoire vive au moment de l'envoi."
+category    = "Politique de stockage"
+group       = "quotas"
+advanced    = true
+
+[[settings]]
+key         = "peer_down_threshold"
+scope       = "global"
+type        = "int"
+default     = 5
+min         = 1
+max         = 100
+label       = "Échecs consécutifs avant de déclarer un pair hors-ligne"
+description = "Nombre de sondes de vivacité échouées d'affilée avant qu'un pair passe en « hors-ligne » : il est alors exclu des nouveaux placements et ses fragments sont considérés comme perdus par la passe de réparation suivante, qui les re-réplique. Une valeur basse réagit vite à une panne mais fait sortir du réseau un pair simplement lent ou momentanément injoignable ; une valeur haute tolère une liaison domestique capricieuse au prix d'une réparation plus tardive."
+category    = "Politique de placement"
+group       = "peers"
+
+[[settings]]
+key         = "jurisdiction_allow"
+scope       = "global"
+type        = "string"
+default     = ""
+multiline   = true
+placeholder = "FR"
+label       = "Juridictions autorisées pour les fragments"
+description = "Codes pays ISO (un par ligne) où les fragments ont le droit d'être placés. Vide = ce champ ne dit rien, et c'est alors la liste du fichier de configuration (discovery.geoip_allow) qui s'applique : vider ce champ ne lève donc jamais une contrainte écrite dans le fichier. Dès qu'une liste est active, un pair dont le pays est inconnu est refusé, et si le module de cartographie qui résout les pays est indisponible, aucun fragment n'est distribué — tout reste local plutôt que de risquer une violation. Attention : plus la liste est étroite, moins il y a d'emplacements distincts, et la durabilité repose sur le nombre d'emplacements."
+category    = "Politique de placement"
+group       = "peers"
+risk        = "warning"
+
+[[settings]]
+key         = "repair_interval_secs"
+scope       = "global"
+type        = "int"
+default     = 600
+min         = 60
+max         = 86400
+unit        = "s"
+label       = "Intervalle entre deux réparations automatiques"
+description = "Délai entre deux passes d'auto-réparation (sonde de vivacité des pairs, puis re-réplication des fragments dont l'hôte est devenu injoignable). Chaque passe interroge tous les pairs et relit le placement de tous les fichiers : trop court sur un grand nœud, la réparation devient le principal consommateur de bande passante. Le nouvel intervalle s'applique à partir de la passe suivante ; la réparation à la demande reste disponible dans « Durabilité & réparation »."
+category    = "Réparation automatique"
+group       = "maintenance"
+
+# ── Conservation & réciprocité ────────────────────────────────────────────────
+# Un pair absent longtemps ne contribue plus à la pérennité des données des
+# autres. Ces seuils, en JOURS d'absence, décident quand ce nœud commence à
+# récupérer l'espace qu'il consacre à ce pair — de façon graduée et réversible,
+# et d'autant plus tard que le pair a été fiable (la « marge »). Chaque hôte agit
+# localement sur ses propres fragments : aucune commande réseau ne détruit les
+# données d'autrui.
+
+[[settings]]
+key         = "retention_grace_days"
+scope       = "global"
+type        = "int"
+default     = 14
+min         = 1
+max         = 3650
+unit        = "j"
+label       = "Grâce (jours d'absence)"
+description = "Durée d'absence d'un pair avant qu'on cesse de lui confier de nouveaux fragments. Rien n'est supprimé pendant la grâce : c'est une simple mise en veille de la relation. Les pairs fiables bénéficient d'une marge supplémentaire, proportionnelle à leur contribution passée."
+category    = "Conservation"
+group       = "retention"
+
+[[settings]]
+key         = "retention_reclaim_days"
+scope       = "global"
+type        = "int"
+default     = 45
+min         = 1
+max         = 3650
+unit        = "j"
+label       = "Récupération de la parité (jours d'absence)"
+description = "Durée d'absence avant qu'on libère les fragments de PARITÉ qu'on héberge pour un pair. Les fragments de données suffisent à reconstruire ses fichiers : cette étape rend de l'espace tout en restant réversible s'il revient. Toujours au moins égal au seuil de grâce."
+category    = "Conservation"
+group       = "retention"
+
+[[settings]]
+key         = "retention_evict_days"
+scope       = "global"
+type        = "int"
+default     = 180
+min         = 1
+max         = 3650
+unit        = "j"
+label       = "Éviction complète (jours d'absence)"
+description = "Durée d'absence avant qu'on supprime TOUS les fragments qu'on héberge pour un pair. Étape finale et irréversible côté hôte : à ne franchir qu'après une très longue absence. Toujours au moins égal au seuil de récupération de la parité."
+category    = "Conservation"
+group       = "retention"
+
 [events]
-# Cleans up a user's quota row when their account is removed.
+# Delivered by the core to POST /ipc/events (internal secret only). UserDeleted
+# purges the account's files, gives back the storage it weighed on the node, and
+# removes its quota row — the row is what keeps the capacity marked as allocated.
 subscribed = [
     "UserDeleted",
 ]
