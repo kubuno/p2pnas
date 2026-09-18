@@ -9,6 +9,8 @@ number at release time, and CI publishes that section as the GitHub Release note
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-18
+
 ### Security
 
 - **The node's master key is better protected at rest.** Copies of the key made
