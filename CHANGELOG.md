@@ -9,6 +9,20 @@ number at release time, and CI publishes that section as the GitHub Release note
 
 ## [Unreleased]
 
+### Security
+
+- **Database driver updated past an unfixable advisory.** The previous line
+  pulled in an RSA implementation vulnerable to a timing side-channel
+  (RUSTSEC-2023-0071) for which no fix will ever exist. The new line does not
+  depend on it at all, and it refuses any SQL string built at run time unless it
+  has been audited — the queries here were checked and marked.
+- **Encrypted-manifest library updated alongside it.** The local SQLCipher
+  binding had to move up with the database driver so the two agree on a single
+  copy of the SQLite engine. Behaviour is unchanged; manifests are read and
+  written exactly as before.
+- **Concurrency primitive updated to a sound release.** The pinned
+  `event-listener` carried RUSTSEC-2026-0221 (unsoundness).
+
 ## [0.2.2] - 2026-09-19
 
 ### Fixed

@@ -47,7 +47,11 @@ const MAINTENANCE_EVERY: Duration = Duration::from_secs(3600);
 /// callers could still both insert), but it is enough to keep the periodic ticker
 /// from piling up work it will never catch up with.
 pub async fn enqueue(db: &PgPool, kind: &str, payload: Value) {
-    let sql = if COALESCED_KINDS.contains(&kind) {
+    // Both branches are string literals, so the statement text is fixed at compile
+    // time: `kind` only selects between them and never reaches the SQL, it is bound
+    // as a parameter below. The `&'static str` annotation makes that guarantee the
+    // compiler's — a run-time-built `String` would no longer satisfy `SqlSafeStr`.
+    let sql: &'static str = if COALESCED_KINDS.contains(&kind) {
         "INSERT INTO p2pnas.jobs (kind, payload)
          SELECT $1::text, $2::jsonb
          WHERE NOT EXISTS (

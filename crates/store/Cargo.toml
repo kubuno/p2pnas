@@ -10,7 +10,7 @@ p2pnas-core = { path = "../core" }
 
 # Encrypted manifest (SQLCipher = AES-256 at rest), compiled with vendored OpenSSL
 # so there is no system dependency.
-rusqlite = { version = "0.31", features = ["bundled-sqlcipher-vendored-openssl"] }
+rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl"] }
 
 blake3    = "1"
 hex       = "0.4"
