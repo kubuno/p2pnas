@@ -9,6 +9,8 @@ number at release time, and CI publishes that section as the GitHub Release note
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-19
+
 ### Fixed
 
 - **A Windows package is produced again.** The release built on Linux and macOS

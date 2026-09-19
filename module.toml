@@ -3,7 +3,7 @@ id           = "p2pnas"
 # Technical module name shown in the admin module list. The user-facing storage
 # it provides appears in Drive as a "My Cloud" mount (not as a launcher app).
 display_name = "p2pnas"
-version      = "0.2.1"
+version      = "0.2.2"
 description  = "Stockage pair-à-pair chiffré et auto-réparant (montage « My Cloud » dans Drive)"
 author       = "Kubuno Contributors"
 license      = "AGPL-3.0"
