@@ -29,6 +29,8 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use kubuno_db::dialect::{Backend, Unit};
+use kubuno_db::params;
 use serde::Serialize;
 use serde_json::json;
 
@@ -209,12 +211,13 @@ pub async fn repair_all(st: &AppState) -> RepairReport {
     // 1. Peer snapshot + liveness probe. The status and reliability columns are
     //    read in the SAME query as the addresses: the repair decisions below need
     //    "is this peer durably down?", not just "did it answer this second".
-    let rows: Vec<(String, String, String, f64)> = match sqlx::query_as(
-        "SELECT peer_id, addr, status, reliability_score FROM p2pnas.peers WHERE peer_id <> $1",
-    )
-    .bind(&st.identity.peer_id)
-    .fetch_all(&st.db)
-    .await
+    let rows: Vec<(String, String, String, f64)> = match st
+        .db
+        .fetch_all_as(
+            "SELECT peer_id, addr, status, reliability_score FROM p2pnas.peers WHERE peer_id <> $1",
+            params![&st.identity.peer_id],
+        )
+        .await
     {
         Ok(r) => r,
         Err(e) => {
@@ -265,9 +268,12 @@ pub async fn repair_all(st: &AppState) -> RepairReport {
         if just_down {
             tracing::warn!(peer_id = %pid, "peer marked down after repeated failures");
             view.down.insert(pid.clone());
-            let _ = sqlx::query("INSERT INTO p2pnas.events (kind, payload) VALUES ('peer_down', $1)")
-                .bind(json!({ "peer_id": pid, "addr": addr }))
-                .execute(&st.db)
+            let _ = st
+                .db
+                .execute(
+                    "INSERT INTO p2pnas.events (kind, payload) VALUES ('peer_down', $1)",
+                    params![json!({ "peer_id": pid, "addr": addr })],
+                )
                 .await;
         }
         if rtt.is_some() {
@@ -665,18 +671,25 @@ pub(crate) async fn place_shard(st: &AppState, reachable: &HashMap<String, Strin
 /// flag. `rtt` is Some(ms) when the peer answered, None when it didn't. Returns
 /// true if the peer just went from active → down (so the caller can repair).
 async fn record_peer_health(st: &AppState, peer_id: &str, rtt: Option<f64>) -> bool {
+    let be = st.db.backend();
+    let now = be.now();
     if let Some(rtt_ms) = rtt {
-        let _ = sqlx::query(
-            "UPDATE p2pnas.peers
-             SET reliability_score = LEAST(100.0, reliability_score * 0.8 + 20.0),
-                 rtt_ms = CASE WHEN rtt_ms IS NULL THEN $2 ELSE rtt_ms * 0.7 + $2 * 0.3 END,
-                 consecutive_failures = 0, status = 'active', last_seen = now()
-             WHERE peer_id = $1",
-        )
-        .bind(peer_id)
-        .bind(rtt_ms)
-        .execute(&st.db)
-        .await;
+        let least = crate::least(be);
+        // `rtt_ms` is bound twice (once per use) and `peer_id` last, so the
+        // placeholders appear once each in ascending order.
+        let _ = st
+            .db
+            .execute(
+                &format!(
+                    "UPDATE p2pnas.peers
+                     SET reliability_score = {least}(100.0, reliability_score * 0.8 + 20.0),
+                         rtt_ms = CASE WHEN rtt_ms IS NULL THEN $1 ELSE rtt_ms * 0.7 + $2 * 0.3 END,
+                         consecutive_failures = 0, status = 'active', last_seen = {now}
+                     WHERE peer_id = $3"
+                ),
+                params![rtt_ms, rtt_ms, peer_id],
+            )
+            .await;
         return false;
     }
     // Consecutive failed probes tolerated before the peer is marked `down` (and
@@ -687,30 +700,51 @@ async fn record_peer_health(st: &AppState, peer_id: &str, rtt: Option<f64>) -> b
     // Failure: decay score, bump the failure counter, flip to 'down' at the
     // threshold.
     //
-    // The self-join reads `prev` from the statement's pre-update snapshot, so
-    // RETURNING hands back the status BEFORE and AFTER in one round trip. The
-    // transition is what the caller acts on, and comparing statuses is the only
-    // way to detect it that survives the threshold being edited: a peer that had
-    // accumulated four failures under a threshold of five, then lowered to two,
-    // still goes active → down exactly once — a rule counting failures against
-    // the current threshold would miss that crossing entirely.
-    let row: Option<(String, String)> = sqlx::query_as(
-        "UPDATE p2pnas.peers p
-         SET reliability_score = GREATEST(0.0, p.reliability_score * 0.8),
-             consecutive_failures = p.consecutive_failures + 1,
-             status = CASE WHEN p.consecutive_failures + 1 >= $2 THEN 'down' ELSE p.status END
-         FROM p2pnas.peers prev
-         WHERE p.peer_id = $1 AND prev.peer_id = p.peer_id
-         RETURNING prev.status, p.status",
-    )
-    .bind(peer_id)
-    .bind(threshold)
-    .fetch_optional(&st.db)
+    // The PostgreSQL self-join (`UPDATE ... FROM peers prev ... RETURNING
+    // prev.status, p.status`) read the pre-update status and returned before/after
+    // in one statement — neither the self-join, `FROM` on UPDATE, nor `RETURNING`
+    // is portable. The portable form reads the current status, then updates,
+    // inside one transaction (row-locked on PostgreSQL/MySQL, single-writer on
+    // SQLite) so the read cannot race a concurrent probe. The new status is decided
+    // in Rust: comparing statuses is the only way to detect the active → down
+    // crossing that survives the threshold being edited — a peer with four failures
+    // under a threshold of five, then lowered to two, still crosses exactly once.
+    let greatest = crate::greatest(be);
+    let lock = if be == Backend::Sqlite { "" } else { " FOR UPDATE" };
+    let transition = async {
+        let mut tx = st.db.begin().await?;
+        let before: Option<(String, i32)> = tx
+            .fetch_optional_row(
+                &format!("SELECT status, consecutive_failures FROM p2pnas.peers WHERE peer_id = $1{lock}"),
+                params![peer_id],
+            )
+            .await?
+            .map(|r| Ok::<_, sqlx::Error>((r.try_get::<String>("status")?, r.try_get::<i32>("consecutive_failures")?)))
+            .transpose()?;
+        let Some((before_status, failures)) = before else {
+            tx.commit().await?;
+            return Ok::<bool, sqlx::Error>(false);
+        };
+        let new_failures = failures + 1;
+        let after_status = if new_failures >= threshold { "down" } else { before_status.as_str() };
+        tx.execute(
+            &format!(
+                "UPDATE p2pnas.peers
+                 SET reliability_score = {greatest}(0.0, reliability_score * 0.8),
+                     consecutive_failures = $1,
+                     status = $2
+                 WHERE peer_id = $3"
+            ),
+            params![new_failures, after_status, peer_id],
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(before_status != "down" && after_status == "down")
+    }
     .await
     .map_err(|e| tracing::error!(error = %e, peer_id, "mise à jour de la santé du pair"))
-    .ok()
-    .flatten();
-    matches!(row, Some((before, after)) if before != "down" && after == "down")
+    .unwrap_or(false);
+    transition
 }
 
 /// Compare the consensus public IP (majority of what peers observed) to the last
@@ -718,32 +752,44 @@ async fn record_peer_health(st: &AppState, peer_id: &str, rtt: Option<f64>) -> b
 /// locality rebalance so data can be re-homed nearer the node's new location.
 async fn detect_self_ip_change(st: &AppState, observed: HashMap<String, usize>) {
     let Some((ip, _)) = observed.into_iter().max_by_key(|(_, n)| *n) else { return };
-    let prev: Option<String> = sqlx::query_scalar("SELECT public_ip FROM p2pnas.node_local WHERE id = 1")
-        .fetch_one(&st.db)
+    let be = st.db.backend();
+    let now = be.now();
+    let prev: Option<String> = st
+        .db
+        .fetch_scalar::<Option<String>>("SELECT public_ip FROM p2pnas.node_local WHERE id = 1", params![])
         .await
         .ok()
         .flatten();
     if prev.as_deref() == Some(ip.as_str()) {
         return; // unchanged
     }
-    let _ = sqlx::query("UPDATE p2pnas.node_local SET public_ip = $1, updated_at = now() WHERE id = 1")
-        .bind(&ip)
-        .execute(&st.db)
+    let _ = st
+        .db
+        .execute(
+            &format!("UPDATE p2pnas.node_local SET public_ip = $1, updated_at = {now} WHERE id = 1"),
+            params![&ip],
+        )
         .await;
     if let Some(old) = prev {
         // Always record the change; only auto-trigger a rebalance if we haven't
         // re-homed recently (hysteresis against a flapping IP).
-        let _ = sqlx::query("INSERT INTO p2pnas.events (kind, payload) VALUES ('ip_changed', $1)")
-            .bind(json!({ "old": old, "new": ip }))
-            .execute(&st.db)
+        let _ = st
+            .db
+            .execute(
+                "INSERT INTO p2pnas.events (kind, payload) VALUES ('ip_changed', $1)",
+                params![json!({ "old": old, "new": ip })],
+            )
             .await;
-        let recent: Option<bool> = sqlx::query_scalar(
-            "SELECT last_rebalance_at > now() - interval '30 minutes' FROM p2pnas.node_local WHERE id = 1",
-        )
-        .fetch_one(&st.db)
-        .await
-        .ok()
-        .flatten();
+        let cooldown = be.interval_before(30, Unit::Minute);
+        let recent: Option<bool> = st
+            .db
+            .fetch_scalar::<Option<bool>>(
+                &format!("SELECT last_rebalance_at > {cooldown} FROM p2pnas.node_local WHERE id = 1"),
+                params![],
+            )
+            .await
+            .ok()
+            .flatten();
         if recent == Some(true) {
             tracing::info!(old = %old, new = %ip, "public IP changed but rebalanced recently — skipping (cooldown)");
         } else {
@@ -755,14 +801,17 @@ async fn detect_self_ip_change(st: &AppState, observed: HashMap<String, usize>) 
 
 /// Log a data-loss-risk event for a chunk that can no longer be reconstructed.
 async fn emit_unrepairable(st: &AppState, chunk: &ChunkRow, reachable_count: usize) {
-    let _ = sqlx::query("INSERT INTO p2pnas.events (kind, payload) VALUES ('chunk_unrepairable', $1)")
-        .bind(json!({
-            "chunk_id": chunk.chunk_id,
-            "file_id": chunk.file_id,
-            "reachable_shards": reachable_count,
-            "needed": DATA_SHARDS,
-        }))
-        .execute(&st.db)
+    let _ = st
+        .db
+        .execute(
+            "INSERT INTO p2pnas.events (kind, payload) VALUES ('chunk_unrepairable', $1)",
+            params![json!({
+                "chunk_id": chunk.chunk_id,
+                "file_id": chunk.file_id,
+                "reachable_shards": reachable_count,
+                "needed": DATA_SHARDS,
+            })],
+        )
         .await;
 }
 
@@ -770,9 +819,12 @@ async fn emit_unrepairable(st: &AppState, chunk: &ChunkRow, reachable_count: usi
 /// manifest hash. Rare and diagnostic (a failing disk shows up as a burst of
 /// these), so it is worth a row of its own.
 async fn emit_shard_corrupt(st: &AppState, s: &ShardRow) {
-    if let Err(e) = sqlx::query("INSERT INTO p2pnas.events (kind, payload) VALUES ('shard_corrupt', $1)")
-        .bind(json!({ "fragment_id": s.fragment_id, "chunk_id": s.chunk_id, "location": "local" }))
-        .execute(&st.db)
+    if let Err(e) = st
+        .db
+        .execute(
+            "INSERT INTO p2pnas.events (kind, payload) VALUES ('shard_corrupt', $1)",
+            params![json!({ "fragment_id": s.fragment_id, "chunk_id": s.chunk_id, "location": "local" })],
+        )
         .await
     {
         tracing::error!(error = %e, fragment_id = %s.fragment_id, "recording shard_corrupt event");

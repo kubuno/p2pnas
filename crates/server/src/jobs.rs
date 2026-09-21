@@ -5,9 +5,10 @@
 
 use std::time::{Duration, Instant};
 
+use kubuno_db::dialect::Unit;
+use kubuno_db::{params, DbPool};
 use p2pnas_p2p::P2pMessage;
 use serde_json::{json, Value};
-use sqlx::PgPool;
 
 use crate::{rebalance, repair, state::AppState};
 
@@ -46,39 +47,44 @@ const MAINTENANCE_EVERY: Duration = Duration::from_secs(3600);
 /// already waiting. The `WHERE NOT EXISTS` is not a hard lock (two concurrent
 /// callers could still both insert), but it is enough to keep the periodic ticker
 /// from piling up work it will never catch up with.
-pub async fn enqueue(db: &PgPool, kind: &str, payload: Value) {
-    // Both branches are string literals, so the statement text is fixed at compile
-    // time: `kind` only selects between them and never reaches the SQL, it is bound
-    // as a parameter below. The `&'static str` annotation makes that guarantee the
-    // compiler's — a run-time-built `String` would no longer satisfy `SqlSafeStr`.
-    let sql: &'static str = if COALESCED_KINDS.contains(&kind) {
-        "INSERT INTO p2pnas.jobs (kind, payload)
-         SELECT $1::text, $2::jsonb
-         WHERE NOT EXISTS (
-             SELECT 1 FROM p2pnas.jobs WHERE kind = $1::text AND state = 'pending'
-         )"
+pub async fn enqueue(db: &DbPool, kind: &str, payload: Value) {
+    // The two statement texts are still fixed at compile time: `kind` only selects
+    // between them and is always a bound parameter, never spliced into the SQL. The
+    // coalesced form binds `kind` twice (once for the row, once for the NOT EXISTS
+    // guard) because placeholders must appear once each, in ascending order.
+    let (sql, params) = if COALESCED_KINDS.contains(&kind) {
+        (
+            "INSERT INTO p2pnas.jobs (kind, payload)
+             SELECT $1, $2
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM p2pnas.jobs WHERE kind = $3 AND state = 'pending'
+             )",
+            params![kind, payload, kind],
+        )
     } else {
-        "INSERT INTO p2pnas.jobs (kind, payload) VALUES ($1::text, $2::jsonb)"
+        (
+            "INSERT INTO p2pnas.jobs (kind, payload) VALUES ($1, $2)",
+            params![kind, payload],
+        )
     };
-    match sqlx::query(sql).bind(kind).bind(payload).execute(db).await {
-        Ok(res) if res.rows_affected() == 0 => {
-            tracing::debug!(kind, "job already pending — not enqueued again");
-        }
+    match db.execute(sql, params).await {
+        Ok(0) => tracing::debug!(kind, "job already pending — not enqueued again"),
         Ok(_) => {}
         Err(e) => tracing::warn!(kind, error = %e, "failed to enqueue job"),
     }
 }
 
 /// Add a job that only becomes runnable after `delay` (used to back off retries).
-pub async fn enqueue_after(db: &PgPool, kind: &str, payload: Value, delay: Duration) {
-    if let Err(e) = sqlx::query(
-        "INSERT INTO p2pnas.jobs (kind, payload, run_after) VALUES ($1, $2, now() + make_interval(secs => $3))",
-    )
-    .bind(kind)
-    .bind(payload)
-    .bind(delay.as_secs() as i32)
-    .execute(db)
-    .await
+pub async fn enqueue_after(db: &DbPool, kind: &str, payload: Value, delay: Duration) {
+    // `run_after` is computed in Rust and bound as a timestamp: portable, and it
+    // sidesteps PostgreSQL's `make_interval` (which no other engine has).
+    let run_after = chrono::Utc::now() + chrono::Duration::seconds(delay.as_secs() as i64);
+    if let Err(e) = db
+        .execute(
+            "INSERT INTO p2pnas.jobs (kind, payload, run_after) VALUES ($1, $2, $3)",
+            params![kind, payload, run_after],
+        )
+        .await
     {
         tracing::warn!(kind, error = %e, "failed to enqueue delayed job");
     }
@@ -101,9 +107,9 @@ async fn run_gc_remote(st: &AppState, payload: Value) -> bool {
 
     let mut failed: Vec<(String, String)> = Vec::new();
     for (frag, peer_id) in shards {
-        let addr: Option<(String,)> = sqlx::query_as("SELECT addr FROM p2pnas.peers WHERE peer_id = $1")
-            .bind(&peer_id)
-            .fetch_optional(&st.db)
+        let addr: Option<(String,)> = st
+            .db
+            .fetch_optional_as("SELECT addr FROM p2pnas.peers WHERE peer_id = $1", params![&peer_id])
             .await
             .ok()
             .flatten();
@@ -138,31 +144,63 @@ async fn run_gc_remote(st: &AppState, payload: Value) -> bool {
     true
 }
 
-/// Atomically claim one runnable job (marks it `running`). `FOR UPDATE SKIP
-/// LOCKED` lets multiple workers pull distinct jobs without blocking.
-async fn claim(db: &PgPool) -> Option<(i64, String, Value)> {
-    sqlx::query_as(
-        "UPDATE p2pnas.jobs SET state = 'running', attempts = attempts + 1
-         WHERE id = (
-             SELECT id FROM p2pnas.jobs
-             WHERE state = 'pending' AND run_after <= now()
-             ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1
-         )
-         RETURNING id, kind, payload",
-    )
-    .fetch_optional(db)
-    .await
-    .inspect_err(|e| tracing::error!(error = %e, "failed to claim a job"))
-    .ok()
-    .flatten()
+/// Atomically claim one runnable job (marks it `running`).
+///
+/// `FOR UPDATE SKIP LOCKED` + `RETURNING` was PostgreSQL-only, so the claim is
+/// now the portable form: pick a candidate id, then a conditional
+/// `UPDATE ... WHERE id = ? AND state = 'pending'` whose success is decided by
+/// `rows_affected == 1`. If another worker won the row (0 rows), retry with the
+/// next candidate. This is the only race-safe claim across the three engines —
+/// `SKIP LOCKED` is not portable, and a lock taken outside a transaction
+/// guarantees nothing.
+async fn claim(db: &DbPool) -> Option<(i64, String, Value)> {
+    let now = db.backend().now();
+    loop {
+        let candidate: Option<(i64,)> = db
+            .fetch_optional_as(
+                &format!(
+                    "SELECT id FROM p2pnas.jobs
+                     WHERE state = 'pending' AND run_after <= {now}
+                     ORDER BY id LIMIT 1"
+                ),
+                params![],
+            )
+            .await
+            .inspect_err(|e| tracing::error!(error = %e, "failed to look for a job"))
+            .ok()
+            .flatten();
+        let (id,) = candidate?;
+
+        let claimed = db
+            .execute(
+                "UPDATE p2pnas.jobs SET state = 'running', attempts = attempts + 1
+                 WHERE id = $1 AND state = 'pending'",
+                params![id],
+            )
+            .await
+            .inspect_err(|e| tracing::error!(error = %e, "failed to claim a job"))
+            .unwrap_or(0);
+        if claimed != 1 {
+            // Lost the row to a concurrent worker — look for another candidate.
+            continue;
+        }
+
+        let row: Option<(String, Value)> = db
+            .fetch_optional_as("SELECT kind, payload FROM p2pnas.jobs WHERE id = $1", params![id])
+            .await
+            .ok()
+            .flatten();
+        if let Some((kind, payload)) = row {
+            return Some((id, kind, payload));
+        }
+        // The row vanished between claim and reselect (a purge, say): keep looking.
+    }
 }
 
-async fn finish(db: &PgPool, id: i64, ok: bool) {
+async fn finish(db: &DbPool, id: i64, ok: bool) {
     let state = if ok { "done" } else { "failed" };
-    if let Err(e) = sqlx::query("UPDATE p2pnas.jobs SET state = $2 WHERE id = $1")
-        .bind(id)
-        .bind(state)
-        .execute(db)
+    if let Err(e) = db
+        .execute("UPDATE p2pnas.jobs SET state = $1 WHERE id = $2", params![state, id])
         .await
     {
         // The row stays `running`; the stale-job sweep below is what recovers it.
@@ -175,17 +213,22 @@ async fn finish(db: &PgPool, id: i64, ok: bool) {
 /// `p2pnas.jobs` has no "claimed at" column, so age is measured from `created_at`:
 /// a job still `running` long after it was created either crashed with its worker
 /// or is pathologically slow, and re-running it is harmless in both cases.
-async fn requeue_stale_jobs(db: &PgPool) {
-    match sqlx::query(
-        "UPDATE p2pnas.jobs SET state = 'pending', run_after = now()
-         WHERE state = 'running' AND created_at < now() - make_interval(hours => $1)",
-    )
-    .bind(STALE_RUNNING_HOURS)
-    .execute(db)
-    .await
+async fn requeue_stale_jobs(db: &DbPool) {
+    let be = db.backend();
+    let now = be.now();
+    let cutoff = be.interval_before(STALE_RUNNING_HOURS as u32, Unit::Hour);
+    match db
+        .execute(
+            &format!(
+                "UPDATE p2pnas.jobs SET state = 'pending', run_after = {now}
+                 WHERE state = 'running' AND created_at < {cutoff}"
+            ),
+            params![],
+        )
+        .await
     {
-        Ok(res) if res.rows_affected() > 0 => {
-            tracing::warn!(count = res.rows_affected(), "requeued jobs left running by a crashed worker");
+        Ok(n) if n > 0 => {
+            tracing::warn!(count = n, "requeued jobs left running by a crashed worker");
         }
         Ok(_) => {}
         Err(e) => tracing::error!(error = %e, "failed to requeue stale jobs"),
@@ -195,20 +238,25 @@ async fn requeue_stale_jobs(db: &PgPool) {
 /// Drop finished jobs and old events. Both tables are append-only otherwise and
 /// would grow for the lifetime of the node. Jobs that are still `pending` or
 /// `running` are never touched, whatever their age.
-async fn purge_old_rows(db: &PgPool) {
-    if let Err(e) = sqlx::query(
-        "DELETE FROM p2pnas.jobs
-         WHERE state IN ('done', 'failed') AND created_at < now() - make_interval(days => $1)",
-    )
-    .bind(RETAIN_DAYS)
-    .execute(db)
-    .await
+async fn purge_old_rows(db: &DbPool) {
+    let cutoff = db.backend().interval_before(RETAIN_DAYS as u32, Unit::Day);
+    if let Err(e) = db
+        .execute(
+            &format!(
+                "DELETE FROM p2pnas.jobs
+                 WHERE state IN ('done', 'failed') AND created_at < {cutoff}"
+            ),
+            params![],
+        )
+        .await
     {
         tracing::error!(error = %e, "failed to purge finished jobs");
     }
-    if let Err(e) = sqlx::query("DELETE FROM p2pnas.events WHERE created_at < now() - make_interval(days => $1)")
-        .bind(RETAIN_DAYS)
-        .execute(db)
+    if let Err(e) = db
+        .execute(
+            &format!("DELETE FROM p2pnas.events WHERE created_at < {cutoff}"),
+            params![],
+        )
         .await
     {
         tracing::error!(error = %e, "failed to purge old events");

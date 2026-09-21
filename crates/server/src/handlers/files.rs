@@ -7,6 +7,7 @@ use axum::{
 };
 use std::sync::Arc;
 
+use kubuno_db::params;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -84,20 +85,41 @@ pub async fn upload(
     // An overwrite is charged its full new size and nothing is given back: the
     // version it replaces is KEPT as a restorable version, so those bytes are still
     // stored, still on peers, and still the user's (see `TRASH_COUNTS_AGAINST_QUOTA`).
-    let reserved: Option<i64> = sqlx::query_scalar(
-        "UPDATE p2pnas.user_quota
-            SET used_bytes = used_bytes + $2, updated_at = now()
-          WHERE user_id = $1 AND used_bytes + $2 <= quota_bytes
-      RETURNING used_bytes",
-    )
-    .bind(user.id)
-    .bind(size)
-    .fetch_optional(&st.db)
-    .await
-    .map_err(|e| {
-        tracing::error!(error = %e, user_id = %user.id, size, "p2pnas upload: quota reservation failed");
-        P2pError::Db(e)
-    })?;
+    // Check AND charge as a guarded UPDATE: the loser (over the ceiling) matches no
+    // row. `RETURNING` is not portable (MySQL), so success is read from
+    // `rows_affected == 1`; the guarded update always changes `updated_at`, so a
+    // matched row is never mistaken for a no-op. `used_bytes` is only reselected to
+    // preserve the original signature — the decision is `reserved.is_some()`.
+    let now = st.db.backend().now();
+    let charged = st
+        .db
+        .execute(
+            &format!(
+                "UPDATE p2pnas.user_quota
+                    SET used_bytes = used_bytes + $1, updated_at = {now}
+                  WHERE user_id = $2 AND used_bytes + $3 <= quota_bytes"
+            ),
+            params![size, user.id, size],
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, user_id = %user.id, size, "p2pnas upload: quota reservation failed");
+            P2pError::Db(e)
+        })?;
+    let reserved: Option<i64> = if charged >= 1 {
+        st.db
+            .fetch_optional_scalar::<i64>(
+                "SELECT used_bytes FROM p2pnas.user_quota WHERE user_id = $1",
+                params![user.id],
+            )
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, user_id = %user.id, size, "p2pnas upload: quota reservation failed");
+                P2pError::Db(e)
+            })?
+    } else {
+        None
+    };
     if reserved.is_none() {
         // No row matched: either the account has no quota row at all, or charging
         // this upload would cross the ceiling. The figures below are the ones read
@@ -163,11 +185,17 @@ pub async fn upload(
     // The full new cost is added and none subtracted: the superseded version's
     // shards are still on disk until the retention sweep reclaims them.
     let stored_delta = res.stored_bytes;
-    if let Err(e) =
-        sqlx::query("UPDATE p2pnas.node_local SET used_bytes = GREATEST(used_bytes + $1, 0), updated_at = now() WHERE id = 1")
-            .bind(stored_delta)
-            .execute(&st.db)
-            .await
+    let be = st.db.backend();
+    let (now, greatest) = (be.now(), crate::greatest(be));
+    if let Err(e) = st
+        .db
+        .execute(
+            &format!(
+                "UPDATE p2pnas.node_local SET used_bytes = {greatest}(used_bytes + $1, 0), updated_at = {now} WHERE id = 1"
+            ),
+            params![stored_delta],
+        )
+        .await
     {
         tracing::error!(error = %e, stored_delta, "p2pnas upload: node storage accounting update failed");
     }
@@ -198,13 +226,17 @@ async fn adjust_user_used(st: &AppState, user: uuid::Uuid, delta: i64) {
     if delta == 0 {
         return;
     }
-    if let Err(e) = sqlx::query(
-        "UPDATE p2pnas.user_quota SET used_bytes = GREATEST(used_bytes + $2, 0), updated_at = now() WHERE user_id = $1",
-    )
-    .bind(user)
-    .bind(delta)
-    .execute(&st.db)
-    .await
+    let be = st.db.backend();
+    let (now, greatest) = (be.now(), crate::greatest(be));
+    if let Err(e) = st
+        .db
+        .execute(
+            &format!(
+                "UPDATE p2pnas.user_quota SET used_bytes = {greatest}(used_bytes + $1, 0), updated_at = {now} WHERE user_id = $2"
+            ),
+            params![delta, user],
+        )
+        .await
     {
         tracing::error!(error = %e, user_id = %user, delta, "p2pnas: quota accounting adjustment failed");
     }
@@ -235,14 +267,15 @@ async fn distribute_shards(st: &AppState, user: uuid::Uuid, file_id: &str) {
     // Skip peers already flagged `down` — they're known-bad, no point pinging.
     // `zone` and `reliability_score` ride along so placement can keep a chunk's
     // shards out of a single failure domain and prefer dependable hosts.
-    let all_peers: Vec<PeerPlacementRow> = sqlx::query_as(
-        "SELECT peer_id, addr, country, zone, reliability_score
-           FROM p2pnas.peers WHERE peer_id <> $1 AND status <> 'down'",
-    )
-    .bind(&st.identity.peer_id)
-    .fetch_all(&st.db)
-    .await
-    .unwrap_or_default();
+    let all_peers: Vec<PeerPlacementRow> = st
+        .db
+        .fetch_all_as(
+            "SELECT peer_id, addr, country, zone, reliability_score
+               FROM p2pnas.peers WHERE peer_id <> $1 AND status <> 'down'",
+            params![&st.identity.peer_id],
+        )
+        .await
+        .unwrap_or_default();
 
     // Jurisdiction constraint: only place on peers in an allowed country. Country
     // is resolved by the maps GeoIP service (cached in peers.country). If maps is
@@ -272,16 +305,24 @@ async fn distribute_shards(st: &AppState, user: uuid::Uuid, file_id: &str) {
                     match crate::maps_geoip::country(st, user, &ip).await {
                         crate::maps_geoip::GeoOutcome::Resolved(c) => {
                             if let Some(cc) = &c {
-                                let _ = sqlx::query("UPDATE p2pnas.peers SET country = $1 WHERE peer_id = $2")
-                                    .bind(cc).bind(&pid).execute(&st.db).await;
+                                let _ = st
+                                    .db
+                                    .execute(
+                                        "UPDATE p2pnas.peers SET country = $1 WHERE peer_id = $2",
+                                        params![cc, &pid],
+                                    )
+                                    .await;
                             }
                             c
                         }
                         crate::maps_geoip::GeoOutcome::Unavailable => {
                             tracing::warn!("jurisdiction constraint set but maps GeoIP unavailable — keeping shards local");
-                            let _ = sqlx::query("INSERT INTO p2pnas.events (kind, payload) VALUES ('geo_unavailable', $1)")
-                                .bind(serde_json::json!({ "reason": "maps module GeoIP unavailable; cannot enforce jurisdiction" }))
-                                .execute(&st.db)
+                            let _ = st
+                                .db
+                                .execute(
+                                    "INSERT INTO p2pnas.events (kind, payload) VALUES ('geo_unavailable', $1)",
+                                    params![serde_json::json!({ "reason": "maps module GeoIP unavailable; cannot enforce jurisdiction" })],
+                                )
                                 .await;
                             return; // fail safe: do not distribute onto un-vetted peers
                         }
@@ -411,8 +452,9 @@ pub async fn file_health(
     };
 
     // Which peers are live right now?
-    let peers: Vec<(String, String)> = sqlx::query_as("SELECT peer_id, addr FROM p2pnas.peers")
-        .fetch_all(&st.db)
+    let peers: Vec<(String, String)> = st
+        .db
+        .fetch_all_as("SELECT peer_id, addr FROM p2pnas.peers", params![])
         .await
         .unwrap_or_default();
     let mut live: std::collections::HashMap<String, String> = std::collections::HashMap::new();
@@ -475,8 +517,9 @@ pub async fn file_placement(
 
     // peer_id → (rtt_ms, country, status) for labelling remote shards.
     type PeerMeta = (String, Option<f64>, Option<String>, String);
-    let peers: Vec<PeerMeta> = sqlx::query_as("SELECT peer_id, rtt_ms, country, status FROM p2pnas.peers")
-        .fetch_all(&st.db)
+    let peers: Vec<PeerMeta> = st
+        .db
+        .fetch_all_as("SELECT peer_id, rtt_ms, country, status FROM p2pnas.peers", params![])
         .await
         .unwrap_or_default();
     let meta: std::collections::HashMap<String, (Option<f64>, Option<String>, String)> =
@@ -686,8 +729,9 @@ async fn fetch_and_reassemble(
     //    of chunks re-discover that a known-dead host is dead adds one timeout per
     //    chunk for bytes we will not get anyway.
     let peers: PeerAddrs =
-        match sqlx::query_as::<_, (String, String)>("SELECT peer_id, addr FROM p2pnas.peers WHERE status <> 'down'")
-            .fetch_all(&st.db)
+        match st
+            .db
+            .fetch_all_as::<(String, String)>("SELECT peer_id, addr FROM p2pnas.peers WHERE status <> 'down'", params![])
             .await
         {
             Ok(rows) => rows.into_iter().collect(),
@@ -979,27 +1023,32 @@ pub async fn empty_trash(
 /// must never be allowed to go negative, which would hand out capacity that does
 /// not exist.
 async fn credit_freed_space(st: &AppState, user: uuid::Uuid, size: i64, stored: i64) -> Result<()> {
-    sqlx::query(
-        "UPDATE p2pnas.user_quota SET used_bytes = GREATEST(used_bytes - $2, 0), updated_at = now() WHERE user_id = $1",
-    )
-    .bind(user)
-    .bind(size)
-    .execute(&st.db)
-    .await
-    .map_err(|e| {
-        tracing::error!(error = %e, user_id = %user, size, "p2pnas purge: quota credit failed");
-        P2pError::Db(e)
-    })?;
-    sqlx::query(
-        "UPDATE p2pnas.node_local SET used_bytes = GREATEST(used_bytes - $1, 0), updated_at = now() WHERE id = 1",
-    )
-    .bind(stored)
-    .execute(&st.db)
-    .await
-    .map_err(|e| {
-        tracing::error!(error = %e, stored, "p2pnas purge: node storage accounting update failed");
-        P2pError::Db(e)
-    })?;
+    let be = st.db.backend();
+    let (now, greatest) = (be.now(), crate::greatest(be));
+    st.db
+        .execute(
+            &format!(
+                "UPDATE p2pnas.user_quota SET used_bytes = {greatest}(used_bytes - $1, 0), updated_at = {now} WHERE user_id = $2"
+            ),
+            params![size, user],
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, user_id = %user, size, "p2pnas purge: quota credit failed");
+            P2pError::Db(e)
+        })?;
+    st.db
+        .execute(
+            &format!(
+                "UPDATE p2pnas.node_local SET used_bytes = {greatest}(used_bytes - $1, 0), updated_at = {now} WHERE id = 1"
+            ),
+            params![stored],
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, stored, "p2pnas purge: node storage accounting update failed");
+            P2pError::Db(e)
+        })?;
     Ok(())
 }
 
@@ -1030,6 +1079,8 @@ pub async fn purge_retired_now(st: &AppState) -> (usize, i64) {
     // Per account, because a quota is per account. Best-effort per row: one user's
     // failed credit must not strand the others' — the alternative is a sweep that
     // freed the bytes but told nobody.
+    let be = st.db.backend();
+    let (now, greatest) = (be.now(), crate::greatest(be));
     let mut freed_size = 0i64;
     let mut freed_stored = 0i64;
     for (user_id, size, stored) in report.freed {
@@ -1039,24 +1090,29 @@ pub async fn purge_retired_now(st: &AppState) -> (usize, i64) {
             tracing::error!(user_id = %user_id, "p2pnas retention sweep: unparsable user id in the manifest");
             continue;
         };
-        if let Err(e) = sqlx::query(
-            "UPDATE p2pnas.user_quota SET used_bytes = GREATEST(used_bytes - $2, 0), updated_at = now() WHERE user_id = $1",
-        )
-        .bind(uid)
-        .bind(size)
-        .execute(&st.db)
-        .await
+        if let Err(e) = st
+            .db
+            .execute(
+                &format!(
+                    "UPDATE p2pnas.user_quota SET used_bytes = {greatest}(used_bytes - $1, 0), updated_at = {now} WHERE user_id = $2"
+                ),
+                params![size, uid],
+            )
+            .await
         {
             tracing::error!(error = %e, %uid, size, "p2pnas retention sweep: quota credit failed");
         }
     }
     if freed_stored > 0 {
-        if let Err(e) = sqlx::query(
-            "UPDATE p2pnas.node_local SET used_bytes = GREATEST(used_bytes - $1, 0), updated_at = now() WHERE id = 1",
-        )
-        .bind(freed_stored)
-        .execute(&st.db)
-        .await
+        if let Err(e) = st
+            .db
+            .execute(
+                &format!(
+                    "UPDATE p2pnas.node_local SET used_bytes = {greatest}(used_bytes - $1, 0), updated_at = {now} WHERE id = 1"
+                ),
+                params![freed_stored],
+            )
+            .await
         {
             tracing::error!(error = %e, freed_stored, "p2pnas retention sweep: node accounting failed");
         }
@@ -1065,9 +1121,12 @@ pub async fn purge_retired_now(st: &AppState) -> (usize, i64) {
     enqueue_remote_gc(st, report.remote).await;
     if report.files > 0 {
         tracing::info!(files = report.files, freed_size, freed_stored, "p2pnas retention sweep complete");
-        let _ = sqlx::query("INSERT INTO p2pnas.events (kind, payload) VALUES ('trash_purged', $1)")
-            .bind(json!({ "files": report.files, "bytes": freed_size, "stored_bytes": freed_stored }))
-            .execute(&st.db)
+        let _ = st
+            .db
+            .execute(
+                "INSERT INTO p2pnas.events (kind, payload) VALUES ('trash_purged', $1)",
+                params![json!({ "files": report.files, "bytes": freed_size, "stored_bytes": freed_stored })],
+            )
             .await;
     }
     (report.files, freed_size)
@@ -1110,12 +1169,17 @@ async fn adjust_node_stored(st: &AppState, delta: i64) {
     if delta == 0 {
         return;
     }
-    if let Err(e) = sqlx::query(
-        "UPDATE p2pnas.node_local SET used_bytes = GREATEST(used_bytes + $1, 0), updated_at = now() WHERE id = 1",
-    )
-    .bind(delta)
-    .execute(&st.db)
-    .await
+    let be = st.db.backend();
+    let (now, greatest) = (be.now(), crate::greatest(be));
+    if let Err(e) = st
+        .db
+        .execute(
+            &format!(
+                "UPDATE p2pnas.node_local SET used_bytes = {greatest}(used_bytes + $1, 0), updated_at = {now} WHERE id = 1"
+            ),
+            params![delta],
+        )
+        .await
     {
         tracing::error!(error = %e, delta, "p2pnas packing: node storage accounting update failed");
     }
@@ -1223,9 +1287,12 @@ pub async fn repack_all_now(st: &AppState) -> RepackTotals {
             stored_delta = totals.stored_delta,
             "p2pnas repack: small files regrouped into packs"
         );
-        let _ = sqlx::query("INSERT INTO p2pnas.events (kind, payload) VALUES ('repacked', $1)")
-            .bind(json!({ "packs": totals.packs, "files": totals.files, "stored_delta": totals.stored_delta }))
-            .execute(&st.db)
+        let _ = st
+            .db
+            .execute(
+                "INSERT INTO p2pnas.events (kind, payload) VALUES ('repacked', $1)",
+                params![json!({ "packs": totals.packs, "files": totals.files, "stored_delta": totals.stored_delta })],
+            )
             .await;
     }
     totals
@@ -1329,9 +1396,12 @@ pub async fn compact_packs_now(st: &AppState) -> RepackTotals {
             stored_delta = totals.stored_delta,
             "p2pnas compaction: sparse packs rewritten"
         );
-        let _ = sqlx::query("INSERT INTO p2pnas.events (kind, payload) VALUES ('packs_compacted', $1)")
-            .bind(json!({ "packs": totals.packs, "stored_delta": totals.stored_delta }))
-            .execute(&st.db)
+        let _ = st
+            .db
+            .execute(
+                "INSERT INTO p2pnas.events (kind, payload) VALUES ('packs_compacted', $1)",
+                params![json!({ "packs": totals.packs, "stored_delta": totals.stored_delta })],
+            )
             .await;
     }
     totals

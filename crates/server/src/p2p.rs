@@ -4,9 +4,10 @@
 use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
+use kubuno_db::dialect::Assign;
+use kubuno_db::{params, DbPool};
 use p2pnas_p2p::{AuthenticatedPeer, P2pMessage, PeerSigner, ShardHandler};
 use p2pnas_store::{ChunkStore, NodeIdentity};
-use sqlx::PgPool;
 
 /// Largest single shard we accept to host (a shard is ~chunk/DATA_SHARDS bytes;
 /// 8 MiB is far above the default, and rejects an over-large/malicious frame).
@@ -99,7 +100,7 @@ pub struct P2pShardHandler {
     pub peer_id:  String,
     pub api_port: u16,
     pub store:    Arc<ChunkStore>,
-    pub db:       PgPool,
+    pub db:       DbPool,
     /// Key proving this node owns `peer_id` — see [`node_signer`]. `None`
     /// disables the authenticated handshake for this node.
     pub signer:   Option<Arc<PeerSigner>>,
@@ -108,9 +109,11 @@ pub struct P2pShardHandler {
 impl P2pShardHandler {
     /// Bytes we already host for the given fragment (0 if none).
     async fn hosted_size(&self, fragment_id: &str) -> i64 {
-        sqlx::query_scalar("SELECT size_bytes FROM p2pnas.hosted_shards WHERE fragment_id = $1")
-            .bind(fragment_id)
-            .fetch_optional(&self.db)
+        self.db
+            .fetch_optional_scalar::<i64>(
+                "SELECT size_bytes FROM p2pnas.hosted_shards WHERE fragment_id = $1",
+                params![fragment_id],
+            )
             .await
             .ok()
             .flatten()
@@ -153,15 +156,14 @@ impl P2pShardHandler {
             return false;
         }
 
-        let pinned: Option<(Option<String>,)> =
-            sqlx::query_as("SELECT public_key FROM p2pnas.peers WHERE peer_id = $1")
-                .bind(owner_peer_id)
-                .fetch_optional(&self.db)
-                .await
-                .unwrap_or_else(|e| {
-                    tracing::error!(owner_peer_id, error = %e, "peer key lookup failed");
-                    None
-                });
+        let pinned: Option<(Option<String>,)> = self
+            .db
+            .fetch_optional_as("SELECT public_key FROM p2pnas.peers WHERE peer_id = $1", params![owner_peer_id])
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!(owner_peer_id, error = %e, "peer key lookup failed");
+                None
+            });
 
         match pinned {
             // Unknown peer: unchanged from before, we only host for peers we know.
@@ -254,9 +256,9 @@ impl ShardHandler for P2pShardHandler {
 
         // (3) Write authorization: only host for peers we know (trusted set /
         // discovered). Blocks a random internet host from filling our disk.
-        let known: Option<(i32,)> = sqlx::query_as("SELECT 1 FROM p2pnas.peers WHERE peer_id = $1")
-            .bind(owner_peer_id)
-            .fetch_optional(&self.db)
+        let known: Option<(i32,)> = self
+            .db
+            .fetch_optional_as("SELECT 1 FROM p2pnas.peers WHERE peer_id = $1", params![owner_peer_id])
             .await
             .ok()
             .flatten();
@@ -266,11 +268,11 @@ impl ShardHandler for P2pShardHandler {
         }
 
         // (4) Capacity: never host beyond what we contribute to the network.
-        let (contributed, hosted): (i64, i64) =
-            sqlx::query_as("SELECT contributed_bytes, hosted_bytes FROM p2pnas.node_local WHERE id = 1")
-                .fetch_one(&self.db)
-                .await
-                .unwrap_or((0, 0));
+        let (contributed, hosted): (i64, i64) = self
+            .db
+            .fetch_one_as("SELECT contributed_bytes, hosted_bytes FROM p2pnas.node_local WHERE id = 1", params![])
+            .await
+            .unwrap_or((0, 0));
         let old = self.hosted_size(fragment_id).await;
         if hosted - old + disk_cost > contributed {
             tracing::warn!(fragment_id, hosted, contributed, "rejecting hosted shard: contribution cap reached");
@@ -281,25 +283,42 @@ impl ShardHandler for P2pShardHandler {
             tracing::warn!(fragment_id, error = %e, "hosted shard write failed");
             return false;
         }
-        let r = sqlx::query(
-            "INSERT INTO p2pnas.hosted_shards (fragment_id, owner_peer_id, size_bytes, shard_index)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT (fragment_id) DO UPDATE SET owner_peer_id = EXCLUDED.owner_peer_id, size_bytes = EXCLUDED.size_bytes, shard_index = EXCLUDED.shard_index",
-        )
-        .bind(fragment_id)
-        .bind(owner_peer_id)
-        .bind(disk_cost)
-        .bind(shard_index)
-        .execute(&self.db)
-        .await;
+        let be = self.db.backend();
+        let upsert = be.upsert(
+            "p2pnas.hosted_shards",
+            &["fragment_id"],
+            &[
+                Assign::Incoming("owner_peer_id"),
+                Assign::Incoming("size_bytes"),
+                Assign::Incoming("shard_index"),
+            ],
+        );
+        let r = self
+            .db
+            .execute(
+                &format!(
+                    "INSERT INTO p2pnas.hosted_shards (fragment_id, owner_peer_id, size_bytes, shard_index)
+                     VALUES ($1, $2, $3, $4){upsert}"
+                ),
+                params![fragment_id, owner_peer_id, disk_cost, shard_index],
+            )
+            .await;
         if let Err(e) = r {
             tracing::warn!(fragment_id, error = %e, "hosted shard record failed");
             return false;
         }
         // (16) Accounting: net delta of hosted bytes.
-        let _ = sqlx::query("UPDATE p2pnas.node_local SET hosted_bytes = GREATEST(hosted_bytes + $1, 0), updated_at = now() WHERE id = 1")
-            .bind(disk_cost - old)
-            .execute(&self.db)
+        let (now, greatest) = (be.now(), crate::greatest(be));
+        let _ = self
+            .db
+            .execute(
+                &format!(
+                    "UPDATE p2pnas.node_local
+                        SET hosted_bytes = {greatest}(hosted_bytes + $1, 0), updated_at = {now}
+                      WHERE id = 1"
+                ),
+                params![disk_cost - old],
+            )
             .await;
         true
     }
@@ -309,13 +328,12 @@ impl ShardHandler for P2pShardHandler {
         // shards. Together with fragment-id validation (which blocks reading
         // arbitrary files), this means a `GetShard` can only ever return a
         // ciphertext shard that was legitimately placed here.
-        let hosted: Option<(i32,)> =
-            sqlx::query_as("SELECT 1 FROM p2pnas.hosted_shards WHERE fragment_id = $1")
-                .bind(fragment_id)
-                .fetch_optional(&self.db)
-                .await
-                .ok()
-                .flatten();
+        let hosted: Option<(i32,)> = self
+            .db
+            .fetch_optional_as("SELECT 1 FROM p2pnas.hosted_shards WHERE fragment_id = $1", params![fragment_id])
+            .await
+            .ok()
+            .flatten();
         hosted?;
         self.store.read(fragment_id).ok()
     }
@@ -342,13 +360,15 @@ impl ShardHandler for P2pShardHandler {
         // `delete_from`, which proves it owns that id. Reaching `delete` with an
         // unproven owner is the permissive transition mode (see
         // `strict_peer_auth`), and it is logged as such.
-        let recorded: Option<(String,)> =
-            sqlx::query_as("SELECT owner_peer_id FROM p2pnas.hosted_shards WHERE fragment_id = $1")
-                .bind(fragment_id)
-                .fetch_optional(&self.db)
-                .await
-                .ok()
-                .flatten();
+        let recorded: Option<(String,)> = self
+            .db
+            .fetch_optional_as(
+                "SELECT owner_peer_id FROM p2pnas.hosted_shards WHERE fragment_id = $1",
+                params![fragment_id],
+            )
+            .await
+            .ok()
+            .flatten();
         match recorded {
             // Nothing hosted under this id: idempotent success, delete nothing.
             None => return true,
@@ -361,13 +381,22 @@ impl ShardHandler for P2pShardHandler {
 
         let old = self.hosted_size(fragment_id).await;
         let _ = self.store.delete(fragment_id);
-        let _ = sqlx::query("DELETE FROM p2pnas.hosted_shards WHERE fragment_id = $1")
-            .bind(fragment_id)
-            .execute(&self.db)
+        let _ = self
+            .db
+            .execute("DELETE FROM p2pnas.hosted_shards WHERE fragment_id = $1", params![fragment_id])
             .await;
-        let _ = sqlx::query("UPDATE p2pnas.node_local SET hosted_bytes = GREATEST(hosted_bytes - $1, 0), updated_at = now() WHERE id = 1")
-            .bind(old)
-            .execute(&self.db)
+        let be = self.db.backend();
+        let (now, greatest) = (be.now(), crate::greatest(be));
+        let _ = self
+            .db
+            .execute(
+                &format!(
+                    "UPDATE p2pnas.node_local
+                        SET hosted_bytes = {greatest}(hosted_bytes - $1, 0), updated_at = {now}
+                      WHERE id = 1"
+                ),
+                params![old],
+            )
             .await;
         true
     }

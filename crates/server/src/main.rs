@@ -1,10 +1,9 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use kubuno_p2pnas::{config::Settings, router, state::AppState};
+use kubuno_p2pnas::{config::Settings, router, state::AppState, SCHEMA};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -157,36 +156,26 @@ async fn main() -> Result<()> {
     // P2P listener in-process and never spawns subprocesses.
     kubuno_seccomp::lock_down_process_execution(MODULE_ID);
 
-    // PostgreSQL pool.
-    let opts = settings.database.connect_options()?;
-    let pool = PgPoolOptions::new()
-        .max_connections(settings.database.max_connections)
-        .min_connections(settings.database.min_connections)
-        .acquire_timeout(settings.database.connect_timeout)
-        .connect_with(opts)
+    // Database pool. The engine (PostgreSQL / MySQL / SQLite) is the
+    // administrator's choice in `[database] engine`, read at run time; `connect`
+    // also creates the module's namespace (PostgreSQL schema, MySQL database, or
+    // the ATTACHed SQLite file). Only the control plane lives here — the local
+    // SQLCipher manifest is opened separately below and is untouched.
+    let pool = kubuno_db::connect(&settings.database, SCHEMA)
         .await
-        .context("Connexion PostgreSQL")?;
+        .context("Connexion à la base de données")?;
 
+    // Migrations: the set for the pool's engine, kept inside the module's own
+    // namespace (the schema PostgreSQL already used through its search_path).
     if settings.database.run_migrations {
-        sqlx::query("CREATE SCHEMA IF NOT EXISTS p2pnas")
-            .execute(&pool)
-            .await
-            .context("Création du schéma p2pnas")?;
-
-        let migration_opts = settings
-            .database
-            .connect_options()?
-            .options([("search_path", "p2pnas,public")]);
-        let migration_pool = PgPoolOptions::new()
-            .max_connections(1)
-            .acquire_timeout(settings.database.connect_timeout)
-            .connect_with(migration_opts)
-            .await
-            .context("Pool de migration")?;
-        sqlx::migrate!("../../migrations")
-            .run(&migration_pool)
-            .await
-            .context("Migrations")?;
+        kubuno_db::migrations!(
+            "../../migrations/postgres",
+            "../../migrations/mysql",
+            "../../migrations/sqlite",
+        )
+        .run(&pool, SCHEMA)
+        .await
+        .context("Migrations")?;
     }
 
     // Storage layer: node identity (auto-generated key), SQLCipher manifest, shards.
@@ -304,9 +293,12 @@ async fn main() -> Result<()> {
         let pool = state.db.clone();
         let peer_id = state.identity.peer_id.clone();
         tokio::spawn(async move {
-            let _ = sqlx::query("UPDATE p2pnas.node_local SET peer_id = $1, updated_at = now() WHERE id = 1")
-                .bind(peer_id)
-                .execute(&pool)
+            let now = pool.backend().now();
+            let _ = pool
+                .execute(
+                    &format!("UPDATE p2pnas.node_local SET peer_id = $1, updated_at = {now} WHERE id = 1"),
+                    kubuno_db::params![peer_id],
+                )
                 .await;
         });
     }

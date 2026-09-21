@@ -12,6 +12,7 @@
 //! ignored rather than refused, so the core may add event types without this
 //! route starting to answer errors.
 
+use kubuno_db::params;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -91,34 +92,45 @@ async fn purge_user(st: &AppState, user_id: Uuid) {
         .await;
     }
 
+    let be = st.db.backend();
+    let now = be.now();
+    let greatest = crate::greatest(be);
     if stored > 0 {
-        if let Err(e) = sqlx::query(
-            "UPDATE p2pnas.node_local SET used_bytes = GREATEST(used_bytes - $1, 0), updated_at = now() WHERE id = 1",
-        )
-        .bind(stored)
-        .execute(&st.db)
-        .await
+        if let Err(e) = st
+            .db
+            .execute(
+                &format!(
+                    "UPDATE p2pnas.node_local
+                        SET used_bytes = {greatest}(used_bytes - $1, 0), updated_at = {now}
+                      WHERE id = 1"
+                ),
+                params![stored],
+            )
+            .await
         {
             tracing::error!(error = %e, %user_id, "purge p2pnas : décompte du stockage du nœud");
         }
     }
 
     // The point of the whole subscription: give the allocated capacity back.
-    match sqlx::query("DELETE FROM p2pnas.user_quota WHERE user_id = $1")
-        .bind(user_id)
-        .execute(&st.db)
+    match st
+        .db
+        .execute("DELETE FROM p2pnas.user_quota WHERE user_id = $1", params![user_id])
         .await
     {
-        Ok(r) => tracing::info!(
-            %user_id, deleted, stored, quota_row_removed = r.rows_affected() > 0,
+        Ok(rows) => tracing::info!(
+            %user_id, deleted, stored, quota_row_removed = rows > 0,
             "p2pnas : données purgées après suppression du compte"
         ),
         Err(e) => tracing::error!(error = %e, %user_id, "purge p2pnas : suppression du quota"),
     }
 
-    if let Err(e) = sqlx::query("INSERT INTO p2pnas.events (kind, payload) VALUES ('user_purged', $1)")
-        .bind(serde_json::json!({ "user_id": user_id, "files_deleted": deleted, "stored_bytes_freed": stored }))
-        .execute(&st.db)
+    if let Err(e) = st
+        .db
+        .execute(
+            "INSERT INTO p2pnas.events (kind, payload) VALUES ('user_purged', $1)",
+            params![serde_json::json!({ "user_id": user_id, "files_deleted": deleted, "stored_bytes_freed": stored })],
+        )
         .await
     {
         tracing::error!(error = %e, %user_id, "purge p2pnas : journalisation");

@@ -1,7 +1,10 @@
-use anyhow::Context;
 use config::{Config, ConfigError, Environment, File};
 use serde::Deserialize;
-use std::time::Duration;
+
+/// The `[database]` section is owned by kubuno-db: which of its fields matter
+/// depends on the engine the administrator picks at run time, and the pool is
+/// opened by `kubuno_db::connect`.
+pub use kubuno_db::DbSettings as DatabaseSettings;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Settings {
@@ -70,61 +73,6 @@ impl std::fmt::Debug for CoreSettings {
     }
 }
 
-#[derive(Clone, Deserialize)]
-pub struct DatabaseSettings {
-    pub url:             Option<String>,
-    pub host:            Option<String>,
-    pub port:            Option<u16>,
-    pub user:            Option<String>,
-    pub password:        Option<String>,
-    pub database:        Option<String>,
-    pub max_connections: u32,
-    pub min_connections: u32,
-    #[serde(with = "duration_secs")]
-    pub connect_timeout: Duration,
-    pub run_migrations:  bool,
-}
-
-impl std::fmt::Debug for DatabaseSettings {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // `url` embeds the password (postgres://user:pass@host), so redact it too.
-        f.debug_struct("DatabaseSettings")
-            .field("url", &self.url.as_ref().map(|_| "***"))
-            .field("host", &self.host)
-            .field("port", &self.port)
-            .field("user", &self.user)
-            .field("password", &self.password.as_ref().map(|_| "***"))
-            .field("database", &self.database)
-            .field("max_connections", &self.max_connections)
-            .field("min_connections", &self.min_connections)
-            .field("connect_timeout", &self.connect_timeout)
-            .field("run_migrations", &self.run_migrations)
-            .finish()
-    }
-}
-
-impl DatabaseSettings {
-    pub fn connect_options(&self) -> anyhow::Result<sqlx::postgres::PgConnectOptions> {
-        use std::str::FromStr;
-        // Explicit fields (injected by the supervisor via KUBUNO_DB_*) take priority.
-        if self.host.is_some() || self.user.is_some() {
-            let user     = self.user.as_deref().context("database.user requis")?;
-            let password = self.password.as_deref().context("database.password requis")?;
-            let database = self.database.as_deref().context("database.database requis")?;
-            return Ok(sqlx::postgres::PgConnectOptions::new()
-                .host(self.host.as_deref().unwrap_or("localhost"))
-                .port(self.port.unwrap_or(5432))
-                .username(user)
-                .password(password)
-                .database(database));
-        }
-        if let Some(url) = &self.url {
-            return sqlx::postgres::PgConnectOptions::from_str(url).context("database.url invalide");
-        }
-        Err(anyhow::anyhow!("database : fournissez host/user/password/database"))
-    }
-}
-
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum LogFormat {
@@ -149,6 +97,9 @@ impl Settings {
             .set_default("database.min_connections", 1i64)?
             .set_default("database.connect_timeout", 10i64)?
             .set_default("database.run_migrations", true)?
+            .set_default("database.engine", "postgres")?
+            // SQLite only: directory holding `<schema>.sqlite`.
+            .set_default("database.path", "./data/db")?
             .set_default("storage.data_dir", "/var/lib/kubuno/modules/p2pnas")?
             .set_default("p2p.host", "0.0.0.0")?
             .set_default("p2p.port", 7474i64)?
@@ -169,18 +120,9 @@ impl Settings {
         if let Ok(v) = std::env::var("KUBUNO_DB_USER")         { builder = builder.set_override("database.user",     v)?; }
         if let Ok(v) = std::env::var("KUBUNO_DB_PASSWORD")     { builder = builder.set_override("database.password", v)?; }
         if let Ok(v) = std::env::var("KUBUNO_DB_NAME")         { builder = builder.set_override("database.database", v)?; }
+        if let Ok(v) = std::env::var("KUBUNO_DB_ENGINE")       { builder = builder.set_override("database.engine",   v)?; }
+        if let Ok(v) = std::env::var("KUBUNO_DB_PATH")         { builder = builder.set_override("database.path",     v)?; }
 
         builder.build()?.try_deserialize()
-    }
-}
-
-mod duration_secs {
-    use serde::{Deserialize, Deserializer};
-    use std::time::Duration;
-    pub fn deserialize<'de, D>(d: D) -> Result<Duration, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Ok(Duration::from_secs(u64::deserialize(d)?))
     }
 }

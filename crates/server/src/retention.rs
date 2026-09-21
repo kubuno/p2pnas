@@ -32,6 +32,7 @@
 //! treated as parity, so they are only ever removed at full eviction.
 
 use chrono::{DateTime, Utc};
+use kubuno_db::params;
 use serde_json::json;
 
 use p2pnas_core::erasure::DATA_SHARDS;
@@ -42,24 +43,28 @@ use crate::state::AppState;
 pub async fn sweep(st: &AppState) {
     let inst = st.instance();
 
-    let owners: Vec<String> =
-        sqlx::query_scalar("SELECT DISTINCT owner_peer_id FROM p2pnas.hosted_shards")
-            .fetch_all(&st.db)
-            .await
-            .unwrap_or_default();
+    let owners: Vec<String> = st
+        .db
+        .fetch_all_as::<(String,)>("SELECT DISTINCT owner_peer_id FROM p2pnas.hosted_shards", params![])
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(o,)| o)
+        .collect();
 
     for owner in owners {
         // Absence reference: the owner's last liveness, or — if we never recorded
         // one — when we last received data from it. Reliability credits only a
         // known peer; an owner no longer in `peers` gets none.
-        let row: Option<(Option<DateTime<Utc>>, f64, i32)> = sqlx::query_as(
-            "SELECT last_seen, reliability_score, threshold_days FROM p2pnas.peers WHERE peer_id = $1",
-        )
-        .bind(&owner)
-        .fetch_optional(&st.db)
-        .await
-        .ok()
-        .flatten();
+        let row: Option<(Option<DateTime<Utc>>, f64, i32)> = st
+            .db
+            .fetch_optional_as(
+                "SELECT last_seen, reliability_score, threshold_days FROM p2pnas.peers WHERE peer_id = $1",
+                params![&owner],
+            )
+            .await
+            .ok()
+            .flatten();
 
         let (reference, reliability, generosity_days) = match row {
             Some((Some(seen), rel, grace)) => (seen, rel, grace),
@@ -102,12 +107,14 @@ pub async fn sweep(st: &AppState) {
 /// accepted a shard from it. If even that is missing, treat it as just-seen (do
 /// nothing) rather than risk reclaiming on no evidence.
 async fn fallback_reference(st: &AppState, owner: &str) -> DateTime<Utc> {
-    let latest: Option<Option<DateTime<Utc>>> =
-        sqlx::query_scalar("SELECT MAX(stored_at) FROM p2pnas.hosted_shards WHERE owner_peer_id = $1")
-            .bind(owner)
-            .fetch_optional(&st.db)
-            .await
-            .ok();
+    let latest: Option<Option<DateTime<Utc>>> = st
+        .db
+        .fetch_optional_scalar::<DateTime<Utc>>(
+            "SELECT MAX(stored_at) FROM p2pnas.hosted_shards WHERE owner_peer_id = $1",
+            params![owner],
+        )
+        .await
+        .ok();
     latest.flatten().unwrap_or_else(Utc::now)
 }
 
@@ -116,21 +123,20 @@ async fn fallback_reference(st: &AppState, owner: &str) -> DateTime<Utc> {
 /// to the contribution budget. Returns (count removed, bytes freed).
 async fn reclaim(st: &AppState, owner: &str, parity_only: bool) -> (usize, i64) {
     let rows: Vec<(String, i64)> = if parity_only {
-        sqlx::query_as(
-            "SELECT fragment_id, size_bytes FROM p2pnas.hosted_shards
-             WHERE owner_peer_id = $1 AND shard_index >= $2",
-        )
-        .bind(owner)
-        .bind(DATA_SHARDS as i32)
-        .fetch_all(&st.db)
-        .await
+        st.db
+            .fetch_all_as(
+                "SELECT fragment_id, size_bytes FROM p2pnas.hosted_shards
+                 WHERE owner_peer_id = $1 AND shard_index >= $2",
+                params![owner, DATA_SHARDS as i32],
+            )
+            .await
     } else {
-        sqlx::query_as(
-            "SELECT fragment_id, size_bytes FROM p2pnas.hosted_shards WHERE owner_peer_id = $1",
-        )
-        .bind(owner)
-        .fetch_all(&st.db)
-        .await
+        st.db
+            .fetch_all_as(
+                "SELECT fragment_id, size_bytes FROM p2pnas.hosted_shards WHERE owner_peer_id = $1",
+                params![owner],
+            )
+            .await
     }
     .unwrap_or_default();
 
@@ -139,11 +145,11 @@ async fn reclaim(st: &AppState, owner: &str, parity_only: bool) -> (usize, i64) 
     for (frag, size) in rows {
         let (store, f) = (st.store.clone(), frag.clone());
         let _ = tokio::task::spawn_blocking(move || store.delete(&f)).await;
-        let ok = sqlx::query("DELETE FROM p2pnas.hosted_shards WHERE fragment_id = $1")
-            .bind(&frag)
-            .execute(&st.db)
+        let ok = st
+            .db
+            .execute("DELETE FROM p2pnas.hosted_shards WHERE fragment_id = $1", params![&frag])
             .await
-            .map(|r| r.rows_affected() > 0)
+            .map(|n| n > 0)
             .unwrap_or(false);
         if ok {
             freed += size;
@@ -151,26 +157,38 @@ async fn reclaim(st: &AppState, owner: &str, parity_only: bool) -> (usize, i64) 
         }
     }
     if freed > 0 {
-        let _ = sqlx::query(
-            "UPDATE p2pnas.node_local SET hosted_bytes = GREATEST(hosted_bytes - $1, 0), updated_at = now() WHERE id = 1",
-        )
-        .bind(freed)
-        .execute(&st.db)
-        .await;
+        let be = st.db.backend();
+        let (now, greatest) = (be.now(), crate::greatest(be));
+        let _ = st
+            .db
+            .execute(
+                &format!(
+                    "UPDATE p2pnas.node_local
+                        SET hosted_bytes = {greatest}(hosted_bytes - $1, 0), updated_at = {now}
+                      WHERE id = 1"
+                ),
+                params![freed],
+            )
+            .await;
     }
     (removed, freed)
 }
 
 async fn emit(st: &AppState, kind: &str, owner: &str, shards: usize, freed: i64, absent_days: f64) {
     tracing::info!(kind, owner, shards, freed, absent_days = absent_days.round(), "retention sweep acted on an absent owner");
-    let _ = sqlx::query("INSERT INTO p2pnas.events (kind, payload) VALUES ($1, $2)")
-        .bind(kind)
-        .bind(json!({
-            "owner_peer_id": owner,
-            "shards_removed": shards,
-            "bytes_freed": freed,
-            "absent_days": absent_days.round(),
-        }))
-        .execute(&st.db)
+    let _ = st
+        .db
+        .execute(
+            "INSERT INTO p2pnas.events (kind, payload) VALUES ($1, $2)",
+            params![
+                kind,
+                json!({
+                    "owner_peer_id": owner,
+                    "shards_removed": shards,
+                    "bytes_freed": freed,
+                    "absent_days": absent_days.round(),
+                })
+            ],
+        )
         .await;
 }

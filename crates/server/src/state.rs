@@ -1,11 +1,11 @@
 use crate::config::{instance::InstanceConfig, Settings};
 use p2pnas_store::{ChunkStore, Manifest, NodeIdentity};
-use sqlx::PgPool;
+use kubuno_db::DbPool;
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub db:       PgPool,
+    pub db:       DbPool,
     pub settings: Arc<Settings>,
     pub identity: Arc<NodeIdentity>,
     pub manifest: Arc<Manifest>,

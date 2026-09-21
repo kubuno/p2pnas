@@ -24,6 +24,7 @@
 //! When nothing is left to allocate no row is created and the upload is refused
 //! with the message it always used: an unbacked promise is worse than a refusal.
 
+use kubuno_db::{dialect::Backend, params, DbPool};
 use uuid::Uuid;
 
 use crate::{
@@ -41,12 +42,13 @@ fn db_err(op: &'static str) -> impl Fn(sqlx::Error) -> P2pError {
 
 /// `(quota_bytes, used_bytes)` of an existing row, or `None` if the account has
 /// never been allocated anything.
-async fn read_row(db: &sqlx::PgPool, user_id: Uuid) -> Result<Option<(i64, i64)>> {
-    sqlx::query_as("SELECT quota_bytes, used_bytes FROM p2pnas.user_quota WHERE user_id = $1")
-        .bind(user_id)
-        .fetch_optional(db)
-        .await
-        .map_err(db_err("read_row"))
+async fn read_row(db: &DbPool, user_id: Uuid) -> Result<Option<(i64, i64)>> {
+    db.fetch_optional_as(
+        "SELECT quota_bytes, used_bytes FROM p2pnas.user_quota WHERE user_id = $1",
+        params![user_id],
+    )
+    .await
+    .map_err(db_err("read_row"))
 }
 
 /// The quota an account may rely on RIGHT NOW, without writing anything.
@@ -70,13 +72,16 @@ pub async fn effective(st: &AppState, user_id: Uuid) -> Result<(i64, i64, bool)>
 /// Contributed storage not yet allocated to any user. Never negative: a
 /// contribution lowered by hand below the allocated total (possible on a node
 /// migrated from an older version) means "nothing left", not "owed".
-async fn unallocated(db: &sqlx::PgPool) -> Result<i64> {
-    let contributed: i64 = sqlx::query_scalar("SELECT contributed_bytes FROM p2pnas.node_local WHERE id = 1")
-        .fetch_one(db)
+async fn unallocated(db: &DbPool) -> Result<i64> {
+    let contributed: i64 = db
+        .fetch_scalar("SELECT contributed_bytes FROM p2pnas.node_local WHERE id = 1", params![])
         .await
         .map_err(db_err("unallocated/contributed"))?;
-    let allocated: i64 = sqlx::query_scalar("SELECT COALESCE(SUM(quota_bytes), 0)::BIGINT FROM p2pnas.user_quota")
-        .fetch_one(db)
+    let allocated: i64 = db
+        .fetch_scalar(
+            &format!("SELECT {} FROM p2pnas.user_quota", db.backend().sum_bigint("quota_bytes")),
+            params![],
+        )
         .await
         .map_err(db_err("unallocated/allocated"))?;
     Ok((contributed - allocated).max(0))
@@ -100,30 +105,47 @@ pub async fn ensure(st: &AppState, user_id: Uuid) -> Result<(i64, i64)> {
     // One transaction, and a row lock on the single `node_local` row: the grant
     // is decided from a total that a concurrent first upload could otherwise be
     // changing, and two accounts must not both be handed the last free gigabyte.
+    // `FOR UPDATE` is used where the engine has it (PostgreSQL, MySQL); on SQLite
+    // the transaction already holds the single-writer permit, so the lock is
+    // implicit and the clause is omitted (SQLite has no `FOR UPDATE`).
+    let be = st.db.backend();
+    let now = be.now();
+    let lock = if be == Backend::Sqlite { "" } else { " FOR UPDATE" };
+
     let mut tx = st.db.begin().await.map_err(db_err("ensure/begin"))?;
 
-    let contributed: i64 =
-        sqlx::query_scalar("SELECT contributed_bytes FROM p2pnas.node_local WHERE id = 1 FOR UPDATE")
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(db_err("ensure/lock"))?;
+    let contributed: i64 = tx
+        .fetch_optional_scalar(
+            &format!("SELECT contributed_bytes FROM p2pnas.node_local WHERE id = 1{lock}"),
+            params![],
+        )
+        .await
+        .map_err(db_err("ensure/lock"))?
+        .ok_or_else(|| db_err("ensure/lock")(sqlx::Error::RowNotFound))?;
 
     // Re-read under the lock: another request for the same account may have won.
-    let existing: Option<(i64, i64)> =
-        sqlx::query_as("SELECT quota_bytes, used_bytes FROM p2pnas.user_quota WHERE user_id = $1")
-            .bind(user_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db_err("ensure/reread"))?;
+    let existing: Option<(i64, i64)> = tx
+        .fetch_optional_row(
+            "SELECT quota_bytes, used_bytes FROM p2pnas.user_quota WHERE user_id = $1",
+            params![user_id],
+        )
+        .await
+        .map_err(db_err("ensure/reread"))?
+        .map(|r| Ok::<_, P2pError>((r.try_get::<i64>("quota_bytes")?, r.try_get::<i64>("used_bytes")?)))
+        .transpose()?;
     if let Some(row) = existing {
         tx.commit().await.map_err(db_err("ensure/commit"))?;
         return Ok(row);
     }
 
-    let allocated: i64 = sqlx::query_scalar("SELECT COALESCE(SUM(quota_bytes), 0)::BIGINT FROM p2pnas.user_quota")
-        .fetch_one(&mut *tx)
+    let allocated: i64 = tx
+        .fetch_optional_scalar(
+            &format!("SELECT {} FROM p2pnas.user_quota", be.sum_bigint("quota_bytes")),
+            params![],
+        )
         .await
-        .map_err(db_err("ensure/allocated"))?;
+        .map_err(db_err("ensure/allocated"))?
+        .unwrap_or(0);
 
     let granted = default_quota.min((contributed - allocated).max(0));
     if granted <= 0 {
@@ -135,22 +157,25 @@ pub async fn ensure(st: &AppState, user_id: Uuid) -> Result<(i64, i64)> {
         return Ok((0, 0));
     }
 
-    sqlx::query(
-        "INSERT INTO p2pnas.user_quota (user_id, quota_bytes, updated_at)
-         VALUES ($1, $2, now())
-         ON CONFLICT (user_id) DO NOTHING",
+    tx.execute(
+        &format!(
+            "INSERT {ignore}INTO p2pnas.user_quota (user_id, quota_bytes, updated_at)
+             VALUES ($1, $2, {now}){conflict}",
+            ignore = be.insert_ignore_prefix(),
+            conflict = be.on_conflict_do_nothing(&["user_id"]),
+        ),
+        params![user_id, granted],
     )
-    .bind(user_id)
-    .bind(granted)
-    .execute(&mut *tx)
     .await
     .map_err(db_err("ensure/insert"))?;
 
     // Leaves a trace in the admin event log: an allocation nobody made by hand
     // must still be explainable after the fact.
-    if let Err(e) = sqlx::query("INSERT INTO p2pnas.events (kind, payload) VALUES ('quota_defaulted', $1)")
-        .bind(serde_json::json!({ "user_id": user_id, "quota_bytes": granted }))
-        .execute(&mut *tx)
+    if let Err(e) = tx
+        .execute(
+            "INSERT INTO p2pnas.events (kind, payload) VALUES ('quota_defaulted', $1)",
+            params![serde_json::json!({ "user_id": user_id, "quota_bytes": granted })],
+        )
         .await
     {
         tracing::error!(error = %e, %user_id, "journalisation de l'attribution du quota par défaut");

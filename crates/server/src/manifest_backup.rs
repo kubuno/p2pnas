@@ -29,6 +29,8 @@
 
 use std::sync::Arc;
 
+use kubuno_db::dialect::Backend;
+use kubuno_db::params;
 use p2pnas_core::erasure::{DATA_SHARDS, TOTAL_SHARDS};
 use p2pnas_p2p::P2pMessage;
 use p2pnas_store::backup::{self, ManifestBackupShard};
@@ -223,12 +225,19 @@ pub async fn run_backup(st: &AppState) -> ManifestBackupReport {
 
 /// Has a recoverable backup already been recorded for this version?
 async fn already_placed(st: &AppState, version: u64) -> bool {
-    let found: std::result::Result<Option<i32>, sqlx::Error> = sqlx::query_scalar(
-        "SELECT 1 FROM p2pnas.events WHERE kind = 'manifest_backup' AND payload->>'version' = $1 LIMIT 1",
-    )
-    .bind(version.to_string())
-    .fetch_optional(&st.db)
-    .await;
+    // `payload->>'version'` is text on PostgreSQL/MySQL; on SQLite json_extract of
+    // a JSON number comes back as an integer, so cast it to text to compare against
+    // the bound string on every engine.
+    let be = st.db.backend();
+    let vexpr = be.json_text("payload", &["version"]);
+    let vexpr = if be == Backend::Sqlite { format!("CAST({vexpr} AS TEXT)") } else { vexpr };
+    let found: std::result::Result<Option<i32>, sqlx::Error> = st
+        .db
+        .fetch_optional_scalar(
+            &format!("SELECT 1 FROM p2pnas.events WHERE kind = 'manifest_backup' AND {vexpr} = $1 LIMIT 1"),
+            params![version.to_string()],
+        )
+        .await;
     match found {
         Ok(v) => v.is_some(),
         Err(e) => {
@@ -242,18 +251,17 @@ async fn already_placed(st: &AppState, version: u64) -> bool {
 
 /// The peers that answered a liveness probe just now, sorted by peer id.
 async fn reachable_peers(st: &AppState) -> ReachablePeers {
-    let rows: Vec<(String, String)> =
-        match sqlx::query_as("SELECT peer_id, addr FROM p2pnas.peers WHERE peer_id <> $1")
-            .bind(&st.identity.peer_id)
-            .fetch_all(&st.db)
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::error!(error = %e, "manifest backup: peer table read failed");
-                return Vec::new();
-            }
-        };
+    let rows: Vec<(String, String)> = match st
+        .db
+        .fetch_all_as("SELECT peer_id, addr FROM p2pnas.peers WHERE peer_id <> $1", params![&st.identity.peer_id])
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "manifest backup: peer table read failed");
+            return Vec::new();
+        }
+    };
 
     let mut set = tokio::task::JoinSet::new();
     for (pid, addr) in rows {
@@ -334,10 +342,12 @@ async fn sweep_old_versions(
 /// Append a control-plane event (best effort — an unrecorded event never stops a
 /// backup, but a failure to record one is worth a log line).
 async fn emit(st: &AppState, kind: &str, payload: Value) {
-    if let Err(e) = sqlx::query("INSERT INTO p2pnas.events (kind, payload) VALUES ($1, $2)")
-        .bind(kind)
-        .bind(payload)
-        .execute(&st.db)
+    if let Err(e) = st
+        .db
+        .execute(
+            "INSERT INTO p2pnas.events (kind, payload) VALUES ($1, $2)",
+            params![kind, payload],
+        )
         .await
     {
         tracing::error!(kind, error = %e, "recording a manifest backup event");
@@ -428,20 +438,19 @@ pub async fn restore(
 /// Peer addresses to interrogate: the control plane's, if it still answers, plus
 /// whatever the administrator typed in.
 async fn restore_peer_addresses(st: &AppState, extra: &[String]) -> Vec<String> {
-    let mut addrs: Vec<String> =
-        match sqlx::query_scalar("SELECT addr FROM p2pnas.peers WHERE peer_id <> $1")
-            .bind(&st.identity.peer_id)
-            .fetch_all(&st.db)
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                // The chicken-and-egg case: the database went down with the node.
-                // Not fatal — the administrator can name the peers by hand.
-                tracing::warn!(error = %e, "manifest restore: peer table unavailable — using only the supplied addresses");
-                Vec::new()
-            }
-        };
+    let mut addrs: Vec<String> = match st
+        .db
+        .fetch_all_as::<(String,)>("SELECT addr FROM p2pnas.peers WHERE peer_id <> $1", params![&st.identity.peer_id])
+        .await
+    {
+        Ok(v) => v.into_iter().map(|(a,)| a).collect(),
+        Err(e) => {
+            // The chicken-and-egg case: the database went down with the node.
+            // Not fatal — the administrator can name the peers by hand.
+            tracing::warn!(error = %e, "manifest restore: peer table unavailable — using only the supplied addresses");
+            Vec::new()
+        }
+    };
     addrs.extend(extra.iter().map(|a| a.trim().to_string()).filter(|a| !a.is_empty()));
     addrs.sort();
     addrs.dedup();
@@ -519,13 +528,14 @@ async fn fetch_and_open(st: &AppState, version: u64, found: &[(usize, String)]) 
 /// the control-plane event log — informational, the restore never relies on it).
 pub async fn recorded_versions(st: &AppState, limit: i64) -> Vec<Value> {
     type Row = (Value, chrono::DateTime<chrono::Utc>);
-    let rows: Vec<Row> = sqlx::query_as(
-        "SELECT payload, created_at FROM p2pnas.events WHERE kind = 'manifest_backup' ORDER BY id DESC LIMIT $1",
-    )
-    .bind(limit)
-    .fetch_all(&st.db)
-    .await
-    .unwrap_or_default();
+    let rows: Vec<Row> = st
+        .db
+        .fetch_all_as(
+            "SELECT payload, created_at FROM p2pnas.events WHERE kind = 'manifest_backup' ORDER BY id DESC LIMIT $1",
+            params![limit],
+        )
+        .await
+        .unwrap_or_default();
     rows.into_iter()
         .map(|(payload, at)| json!({ "payload": payload, "created_at": at.to_rfc3339() }))
         .collect()

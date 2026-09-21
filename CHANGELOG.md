@@ -9,6 +9,25 @@ number at release time, and CI publishes that section as the GitHub Release note
 
 ## [Unreleased]
 
+### Added
+
+- **Choose your database engine.** The control plane — quotas, peer state, the
+  repair job queue and the event log — now runs on PostgreSQL, MySQL/MariaDB or
+  SQLite, whichever the administrator names in `[database] engine`, from the same
+  binary. A small deployment can keep everything in a single SQLite file with no
+  server to run; a large one keeps PostgreSQL. The choice is read at start-up and
+  changes nothing about how the module behaves. (Your **encrypted files stay in
+  the local SQLCipher store exactly as before** — only the shared control plane
+  moved.)
+
+### Changed
+
+- Peer records, quota accounting, the background job queue and the event log were
+  rewritten to run identically on all three engines: the first-use peer-key pin
+  guard, the "claim one job" step and the storage counters no longer rely on
+  PostgreSQL-only SQL, so they behave the same whichever engine backs the node.
+  Existing PostgreSQL nodes are unaffected — their schema and data are untouched.
+
 ### Security
 
 - **Database driver updated past an unfixable advisory.** The previous line

@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 
+use kubuno_db::params;
 use serde::Serialize;
 
 use p2pnas_core::erasure::{PARITY_SHARDS, TOTAL_SHARDS};
@@ -31,14 +32,15 @@ pub async fn rebalance_all(st: &AppState) -> RebalanceReport {
 
     // Live peers (excluding 'down'), measured fresh and sorted near → far so the
     // plan's peer indices line up with ascending latency.
-    let candidates: Vec<(String, String, Option<String>, f64)> = sqlx::query_as(
-        "SELECT peer_id, addr, zone, reliability_score
-           FROM p2pnas.peers WHERE peer_id <> $1 AND status <> 'down'",
-    )
-    .bind(&st.identity.peer_id)
-    .fetch_all(&st.db)
-    .await
-    .unwrap_or_default();
+    let candidates: Vec<(String, String, Option<String>, f64)> = st
+        .db
+        .fetch_all_as(
+            "SELECT peer_id, addr, zone, reliability_score
+               FROM p2pnas.peers WHERE peer_id <> $1 AND status <> 'down'",
+            params![&st.identity.peer_id],
+        )
+        .await
+        .unwrap_or_default();
     let mut live: Vec<(String, String, f64, Option<String>, f64)> = Vec::new();
     for (pid, addr, zone, rel) in candidates {
         if let Ok(rtt) = p2pnas_p2p::ping_rtt(&addr, &st.identity.peer_id, st.settings.server.port).await {
@@ -140,8 +142,12 @@ pub async fn rebalance_all(st: &AppState) -> RebalanceReport {
     if rep.shards_moved > 0 {
         tracing::info!(moved = rep.shards_moved, files = rep.files_scanned, "locality rebalance moved shards");
     }
-    let _ = sqlx::query("UPDATE p2pnas.node_local SET last_rebalance_at = now() WHERE id = 1")
-        .execute(&st.db)
+    let _ = st
+        .db
+        .execute(
+            &format!("UPDATE p2pnas.node_local SET last_rebalance_at = {} WHERE id = 1", st.db.backend().now()),
+            params![],
+        )
         .await;
     rep
 }

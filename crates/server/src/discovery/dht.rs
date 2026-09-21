@@ -14,13 +14,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use sqlx::PgPool;
+use kubuno_db::DbPool;
 
 use p2pnas_p2p::dht::{AddrPolicy, MAX_PERSIST_NODES};
 use p2pnas_store::NodeIdentity;
 
 pub async fn run(
-    db: PgPool,
+    db: DbPool,
     identity: Arc<NodeIdentity>,
     api_port: u16,
     p2p_port: u16,

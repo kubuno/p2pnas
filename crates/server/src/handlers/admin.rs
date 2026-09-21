@@ -5,6 +5,8 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use kubuno_db::dialect::Backend;
+use kubuno_db::params;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -134,11 +136,13 @@ pub async fn manifest_backup_restore(
 
 /// List every user's quota (admin only).
 pub async fn list_quotas(State(st): State<AppState>) -> Result<Json<Value>> {
-    let rows: Vec<(Uuid, i64, i64)> = sqlx::query_as(
-        "SELECT user_id, quota_bytes, used_bytes FROM p2pnas.user_quota ORDER BY user_id",
-    )
-    .fetch_all(&st.db)
-    .await?;
+    let rows: Vec<(Uuid, i64, i64)> = st
+        .db
+        .fetch_all_as(
+            "SELECT user_id, quota_bytes, used_bytes FROM p2pnas.user_quota ORDER BY user_id",
+            params![],
+        )
+        .await?;
 
     let items: Vec<Value> = rows
         .into_iter()
@@ -167,16 +171,22 @@ pub async fn set_quota(State(st): State<AppState>, Json(body): Json<SetQuota>) -
         return Err(P2pError::BadRequest("quota_bytes must be ≥ 0".into()));
     }
 
-    let contributed: i64 =
-        sqlx::query_scalar("SELECT contributed_bytes FROM p2pnas.node_local WHERE id = 1")
-            .fetch_one(&st.db)
-            .await?;
-    let others: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(quota_bytes), 0)::BIGINT FROM p2pnas.user_quota WHERE user_id <> $1",
-    )
-    .bind(body.user_id)
-    .fetch_one(&st.db)
-    .await?;
+    let be = st.db.backend();
+    let now = be.now();
+    let contributed: i64 = st
+        .db
+        .fetch_scalar("SELECT contributed_bytes FROM p2pnas.node_local WHERE id = 1", params![])
+        .await?;
+    let others: i64 = st
+        .db
+        .fetch_scalar(
+            &format!(
+                "SELECT {} FROM p2pnas.user_quota WHERE user_id <> $1",
+                be.sum_bigint("quota_bytes")
+            ),
+            params![body.user_id],
+        )
+        .await?;
 
     if others + body.quota_bytes > contributed {
         return Err(P2pError::BadRequest(format!(
@@ -185,15 +195,25 @@ pub async fn set_quota(State(st): State<AppState>, Json(body): Json<SetQuota>) -
         )));
     }
 
-    sqlx::query(
-        "INSERT INTO p2pnas.user_quota (user_id, quota_bytes, updated_at)
-         VALUES ($1, $2, now())
-         ON CONFLICT (user_id) DO UPDATE SET quota_bytes = EXCLUDED.quota_bytes, updated_at = now()",
-    )
-    .bind(body.user_id)
-    .bind(body.quota_bytes)
-    .execute(&st.db)
-    .await?;
+    // `updated_at` is set both on insert and in the conflict branch; the upsert
+    // helper's `Expr` splices the engine's now() there.
+    let upsert = be.upsert(
+        "p2pnas.user_quota",
+        &["user_id"],
+        &[
+            kubuno_db::dialect::Assign::Incoming("quota_bytes"),
+            kubuno_db::dialect::Assign::Expr { col: "updated_at", expr: now },
+        ],
+    );
+    st.db
+        .execute(
+            &format!(
+                "INSERT INTO p2pnas.user_quota (user_id, quota_bytes, updated_at)
+                 VALUES ($1, $2, {now}){upsert}"
+            ),
+            params![body.user_id, body.quota_bytes],
+        )
+        .await?;
 
     Ok(Json(json!({ "user_id": body.user_id, "quota_bytes": body.quota_bytes })))
 }
@@ -209,11 +229,18 @@ pub async fn set_contribution(State(st): State<AppState>, Json(body): Json<SetCo
     if body.bytes < 0 {
         return Err(P2pError::BadRequest("bytes must be ≥ 0".into()));
     }
-    let used: i64 = sqlx::query_scalar("SELECT used_bytes FROM p2pnas.node_local WHERE id = 1")
-        .fetch_one(&st.db)
+    let be = st.db.backend();
+    let now = be.now();
+    let used: i64 = st
+        .db
+        .fetch_scalar("SELECT used_bytes FROM p2pnas.node_local WHERE id = 1", params![])
         .await?;
-    let allocated: i64 = sqlx::query_scalar("SELECT COALESCE(SUM(quota_bytes), 0)::BIGINT FROM p2pnas.user_quota")
-        .fetch_one(&st.db)
+    let allocated: i64 = st
+        .db
+        .fetch_scalar(
+            &format!("SELECT {} FROM p2pnas.user_quota", be.sum_bigint("quota_bytes")),
+            params![],
+        )
         .await?;
     if body.bytes < used || body.bytes < allocated {
         return Err(P2pError::BadRequest(format!(
@@ -221,9 +248,11 @@ pub async fn set_contribution(State(st): State<AppState>, Json(body): Json<SetCo
             body.bytes, used, allocated
         )));
     }
-    sqlx::query("UPDATE p2pnas.node_local SET contributed_bytes = $1, updated_at = now() WHERE id = 1")
-        .bind(body.bytes)
-        .execute(&st.db)
+    st.db
+        .execute(
+            &format!("UPDATE p2pnas.node_local SET contributed_bytes = $1, updated_at = {now} WHERE id = 1"),
+            params![body.bytes],
+        )
         .await?;
     Ok(Json(json!({ "contributed_bytes": body.bytes })))
 }
@@ -273,30 +302,66 @@ pub async fn add_peer(State(st): State<AppState>, Json(body): Json<AddPeer>) -> 
     // and a decade is well past any plausible intent.
     let generosity = body.threshold_days.map(|d| d.clamp(0, 3650));
 
-    // Same hijack guard as discovery: an update is refused if a different key is
-    // already pinned for this peer_id. `COALESCE` on the key means a peer that
-    // could not prove itself never erases a key we already trust.
-    let updated = sqlx::query(
-        "INSERT INTO p2pnas.peers (peer_id, addr, status, last_seen, threshold_days, public_key, verified_at)
-         VALUES ($1, $2, $3, now(), COALESCE($4, 7), $5::text,
-                 CASE WHEN $5::text IS NULL THEN NULL ELSE now() END)
-         ON CONFLICT (peer_id) DO UPDATE SET
-             addr = EXCLUDED.addr,
-             last_seen = now(),
-             threshold_days = COALESCE($4, peers.threshold_days),
-             public_key = COALESCE(peers.public_key, EXCLUDED.public_key),
-             verified_at = CASE WHEN EXCLUDED.public_key IS NULL THEN peers.verified_at ELSE now() END
-         WHERE peers.public_key IS NULL OR peers.public_key IS NOT DISTINCT FROM EXCLUDED.public_key",
-    )
-    .bind(&peer_id)
-    .bind(&addr)
-    .bind(status)
-    .bind(generosity)
-    .bind(public_key.as_deref())
-    .execute(&st.db)
+    // Same hijack guard as discovery, done here as a portable read-modify-write
+    // (the conditional upsert it replaces is PostgreSQL-only): an update is refused
+    // if a different key is already pinned for this peer_id. `COALESCE` on the key
+    // means a peer that could not prove itself never erases a key we already trust.
+    let be = st.db.backend();
+    let now = be.now();
+    let lock = if be == Backend::Sqlite { "" } else { " FOR UPDATE" };
+    let key = public_key.as_deref();
+
+    let applied = async {
+        let mut tx = st.db.begin().await?;
+        let existing: Option<Option<String>> = tx
+            .fetch_optional_row(
+                &format!("SELECT public_key FROM p2pnas.peers WHERE peer_id = $1{lock}"),
+                params![&peer_id],
+            )
+            .await?
+            .map(|r| r.try_get::<Option<String>>("public_key"))
+            .transpose()?;
+
+        let applied = match existing {
+            None => {
+                tx.execute(
+                    &format!(
+                        "INSERT INTO p2pnas.peers
+                             (peer_id, addr, status, last_seen, threshold_days, public_key, verified_at)
+                         VALUES ($1, $2, $3, {now}, COALESCE($4, 7), $5,
+                                 CASE WHEN $6 IS NULL THEN NULL ELSE {now} END)"
+                    ),
+                    params![&peer_id, &addr, status, generosity, key, key],
+                )
+                .await?;
+                true
+            }
+            Some(pinned) => {
+                let allowed = pinned.is_none() || pinned.as_deref() == key;
+                if allowed {
+                    tx.execute(
+                        &format!(
+                            "UPDATE p2pnas.peers SET
+                                 addr = $1,
+                                 last_seen = {now},
+                                 threshold_days = COALESCE($2, threshold_days),
+                                 public_key = COALESCE(public_key, $3),
+                                 verified_at = CASE WHEN $4 IS NULL THEN verified_at ELSE {now} END
+                             WHERE peer_id = $5"
+                        ),
+                        params![&addr, generosity, key, key, &peer_id],
+                    )
+                    .await?;
+                }
+                allowed
+            }
+        };
+        tx.commit().await?;
+        Ok::<bool, sqlx::Error>(applied)
+    }
     .await?;
 
-    if updated.rows_affected() == 0 {
+    if !applied {
         tracing::warn!(peer_id, addr, "add_peer refused: a different public key is pinned for this peer");
         return Err(P2pError::BadRequest(
             "ce pair est déjà enregistré avec une autre clé publique — vérifiez l'adresse".into(),
@@ -326,34 +391,64 @@ pub async fn rebalance(State(st): State<AppState>) -> Result<Json<Value>> {
 
 /// Node metrics (admin only): storage, peers, jobs, discovery, data-loss risk.
 pub async fn metrics(State(st): State<AppState>) -> Result<Json<Value>> {
-    let (contributed, used, hosted): (i64, i64, i64) =
-        sqlx::query_as("SELECT contributed_bytes, used_bytes, hosted_bytes FROM p2pnas.node_local WHERE id = 1")
-            .fetch_one(&st.db)
-            .await
-            .unwrap_or((0, 0, 0));
-    let (public_ip, country): (Option<String>, Option<String>) =
-        sqlx::query_as("SELECT public_ip, country FROM p2pnas.node_local WHERE id = 1")
-            .fetch_one(&st.db)
-            .await
-            .unwrap_or((None, None));
-    let (peers_total, peers_active, peers_down): (i64, i64, i64) = sqlx::query_as(
-        "SELECT COUNT(*), COUNT(*) FILTER (WHERE status = 'active'), COUNT(*) FILTER (WHERE status = 'down') FROM p2pnas.peers",
-    )
-    .fetch_one(&st.db)
-    .await
-    .unwrap_or((0, 0, 0));
-    let hosted_shards: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM p2pnas.hosted_shards")
-        .fetch_one(&st.db)
+    let be = st.db.backend();
+    let (contributed, used, hosted): (i64, i64, i64) = st
+        .db
+        .fetch_one_as(
+            "SELECT contributed_bytes, used_bytes, hosted_bytes FROM p2pnas.node_local WHERE id = 1",
+            params![],
+        )
+        .await
+        .unwrap_or((0, 0, 0));
+    let (public_ip, country): (Option<String>, Option<String>) = st
+        .db
+        .fetch_one_as("SELECT public_ip, country FROM p2pnas.node_local WHERE id = 1", params![])
+        .await
+        .unwrap_or((None, None));
+    // `COUNT(*) FILTER (WHERE …)` is PostgreSQL-only; the portable form counts a
+    // conditional 1/0 with SUM, cast to bigint by `sum_bigint`.
+    let (peers_total, peers_active, peers_down): (i64, i64, i64) = st
+        .db
+        .fetch_one_as(
+            &format!(
+                "SELECT {}, {}, {} FROM p2pnas.peers",
+                be.count_bigint("*"),
+                be.sum_bigint("CASE WHEN status = 'active' THEN 1 ELSE 0 END"),
+                be.sum_bigint("CASE WHEN status = 'down' THEN 1 ELSE 0 END"),
+            ),
+            params![],
+        )
+        .await
+        .unwrap_or((0, 0, 0));
+    let hosted_shards: i64 = st
+        .db
+        .fetch_scalar(
+            &format!("SELECT {} FROM p2pnas.hosted_shards", be.count_bigint("*")),
+            params![],
+        )
         .await
         .unwrap_or(0);
-    let (jobs_pending, jobs_running): (i64, i64) = sqlx::query_as(
-        "SELECT COUNT(*) FILTER (WHERE state = 'pending'), COUNT(*) FILTER (WHERE state = 'running') FROM p2pnas.jobs",
-    )
-    .fetch_one(&st.db)
-    .await
-    .unwrap_or((0, 0));
-    let unrepairable: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM p2pnas.events WHERE kind = 'chunk_unrepairable'")
-        .fetch_one(&st.db)
+    let (jobs_pending, jobs_running): (i64, i64) = st
+        .db
+        .fetch_one_as(
+            &format!(
+                "SELECT {}, {} FROM p2pnas.jobs",
+                be.sum_bigint("CASE WHEN state = 'pending' THEN 1 ELSE 0 END"),
+                be.sum_bigint("CASE WHEN state = 'running' THEN 1 ELSE 0 END"),
+            ),
+            params![],
+        )
+        .await
+        .unwrap_or((0, 0));
+    let unrepairable: i64 = st
+        .db
+        .fetch_scalar(
+            &format!(
+                "SELECT {} FROM p2pnas.events WHERE kind = 'chunk_unrepairable'",
+                be.count_bigint("*")
+            ),
+            params![],
+        )
         .await
         .unwrap_or(0);
 
@@ -385,23 +480,24 @@ pub async fn remove_peer(
     State(st): State<AppState>,
     axum::extract::Path(peer_id): axum::extract::Path<String>,
 ) -> Result<Json<Value>> {
-    let n = sqlx::query("DELETE FROM p2pnas.peers WHERE peer_id = $1")
-        .bind(&peer_id)
-        .execute(&st.db)
-        .await?
-        .rows_affected();
+    let n = st
+        .db
+        .execute("DELETE FROM p2pnas.peers WHERE peer_id = $1", params![&peer_id])
+        .await?;
     Ok(Json(json!({ "removed": peer_id, "found": n > 0 })))
 }
 
 /// List trusted peers (admin only).
 pub async fn list_peers(State(st): State<AppState>) -> Result<Json<Value>> {
     type Row = (String, String, f64, i64, Option<chrono::DateTime<chrono::Utc>>, Option<f64>, Option<String>, i32);
-    let rows: Vec<Row> = sqlx::query_as(
-        "SELECT peer_id, addr, reliability_score, contributed_bytes, last_seen, rtt_ms, country, threshold_days
-         FROM p2pnas.peers ORDER BY reliability_score DESC, peer_id",
-    )
-    .fetch_all(&st.db)
-    .await?;
+    let rows: Vec<Row> = st
+        .db
+        .fetch_all_as(
+            "SELECT peer_id, addr, reliability_score, contributed_bytes, last_seen, rtt_ms, country, threshold_days
+             FROM p2pnas.peers ORDER BY reliability_score DESC, peer_id",
+            params![],
+        )
+        .await?;
 
     let items: Vec<Value> = rows
         .into_iter()
@@ -425,11 +521,13 @@ pub async fn list_peers(State(st): State<AppState>) -> Result<Json<Value>> {
 /// Recent control-plane events (admin only): repair / data-loss-risk notices.
 pub async fn list_events(State(st): State<AppState>) -> Result<Json<Value>> {
     type Row = (i64, String, Value, chrono::DateTime<chrono::Utc>);
-    let rows: Vec<Row> = sqlx::query_as(
-        "SELECT id, kind, payload, created_at FROM p2pnas.events ORDER BY id DESC LIMIT 50",
-    )
-    .fetch_all(&st.db)
-    .await?;
+    let rows: Vec<Row> = st
+        .db
+        .fetch_all_as(
+            "SELECT id, kind, payload, created_at FROM p2pnas.events ORDER BY id DESC LIMIT 50",
+            params![],
+        )
+        .await?;
 
     let items: Vec<Value> = rows
         .into_iter()

@@ -9,14 +9,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
-use sqlx::PgPool;
+use kubuno_db::DbPool;
 
 use p2pnas_store::NodeIdentity;
 
 const SERVICE_TYPE: &str = "_p2pnas._tcp.local.";
 
 /// Announce this node and continuously register peers found on the LAN.
-pub async fn run(db: PgPool, identity: Arc<NodeIdentity>, api_port: u16, p2p_port: u16) {
+pub async fn run(db: DbPool, identity: Arc<NodeIdentity>, api_port: u16, p2p_port: u16) {
     let daemon = match ServiceDaemon::new() {
         Ok(d) => d,
         Err(e) => {
