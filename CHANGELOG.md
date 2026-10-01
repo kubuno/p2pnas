@@ -43,6 +43,14 @@ number at release time, and CI publishes that section as the GitHub Release note
 - **Concurrency primitive updated to a sound release.** The pinned
   `event-listener` carried RUSTSEC-2026-0221 (unsoundness).
 
+### Fixed
+
+- **Database migrations keep the same checksum on every OS.** The repository now
+  pins line endings to LF (`.gitattributes`), so a checkout on Windows no longer
+  turns SQL migrations, scripts, manifests or sources into CRLF. A database
+  migrated by a Linux build is therefore no longer refused by a Windows or macOS
+  build of the same version because its migration checksums differ.
+
 ## [0.2.2] - 2026-09-19
 
 ### Fixed

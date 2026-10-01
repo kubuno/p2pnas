@@ -1,0 +1,86 @@
+# Line-ending policy for Kubuno repositories (MULTI-OS-AUDIT C30).
+#
+# The repository stores text files with LF, and every text file is also checked
+# out with LF on every OS, whatever core.autocrlf says: working trees are shared
+# between Linux and Windows hosts, and several file types are hashed or
+# embedded byte for byte. Git detects text files on its own; the types listed
+# below are forced to text so that detection can never classify them as binary
+# and skip the conversion.
+* text=auto eol=lf
+
+# SQL migrations: sqlx::migrate! embeds a SHA-384 of each file's bytes. A CRLF
+# checkout changes the checksum, and a database migrated by a build made on
+# another OS is then refused (VersionMismatch). Never let these become CRLF.
+*.sql       text eol=lf
+
+# Shell scripts, Makefiles, Dockerfiles, Python: interpreters choke on CR.
+*.sh        text eol=lf
+*.py        text eol=lf
+Makefile    text eol=lf
+Dockerfile* text eol=lf
+
+# Manifests and configuration: module.toml and config examples are copied into
+# the .kbpkg and covered by its SHA256SUMS; Cargo files would otherwise churn.
+*.toml      text eol=lf
+*.lock      text eol=lf
+*.example   text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+
+# Rust sources: include_str!/include_bytes! embed source files and fixtures.
+*.rs        text eol=lf
+
+# Frontend sources and build inputs: the bundle must be byte-identical
+# whichever OS builds it.
+*.ts        text eol=lf
+*.tsx       text eol=lf
+*.js        text eol=lf
+*.mjs       text eol=lf
+*.cjs       text eol=lf
+*.json      text eol=lf
+*.css       text eol=lf
+*.html      text eol=lf
+*.svg       text eol=lf
+
+# Documentation: READMEs and CHANGELOGs are published as-is (release notes).
+*.md        text eol=lf
+
+# Windows command scripts: cmd.exe mis-parses labels and GOTO targets with LF.
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+
+# Binary assets and packages: never convert, never diff as text.
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.webp      binary
+*.ico       binary
+*.bmp       binary
+*.ttf       binary
+*.otf       binary
+*.woff      binary
+*.woff2     binary
+*.eot       binary
+*.pdf       binary
+*.zip       binary
+*.gz        binary
+*.tgz       binary
+*.xz        binary
+*.zst       binary
+*.7z        binary
+*.tar       binary
+*.jar       binary
+*.wasm      binary
+*.bdic      binary
+*.nupkg     binary
+*.vsix      binary
+*.kbpkg     binary
+*.deb       binary
+*.rpm       binary
+*.msi       binary
+*.exe       binary
+*.dll       binary
+*.pdb       binary
+*.so        binary
+*.dylib     binary
