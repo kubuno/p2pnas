@@ -47,6 +47,10 @@ number at release time, and CI publishes that section as the GitHub Release note
 
 ### Fixed
 
+- **P2P NAS builds from a clean checkout again.** The lockfile pinned the shared
+  `kubuno-db` crate to a commit that no longer exists on GitHub after its tag was
+  moved, so a fresh `cargo build` could not fetch it. The lockfile now points at
+  the commit the tag currently resolves to.
 - **A Windows package is produced again.** The release built on Linux and macOS
   but never on Windows: the encrypted-database layer builds OpenSSL from source
   through Perl, and the runner picked a Perl missing part of its core library.

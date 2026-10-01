@@ -1531,7 +1531,7 @@ dependencies = [
 [[package]]
 name = "kubuno-db"
 version = "0.7.0"
-source = "git+https://github.com/kubuno/core?tag=db-v0.7.0#63b51dbcae6072d9a8828557df77b10602095787"
+source = "git+https://github.com/kubuno/core?tag=db-v0.7.0#cd78dc3670dfeaea322743f3b13855ac96119dc7"
 dependencies = [
  "chrono",
  "rust-stemmers",
