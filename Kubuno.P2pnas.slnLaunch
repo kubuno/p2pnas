@@ -1,0 +1,15 @@
+[
+  {
+    "Name": "P2pnas (Kubuno Core + browser)",
+    "Projects": [
+      {
+        "Path": "crates\\server\\Kubuno.P2pnas.Server.rsproj",
+        "Action": "Start"
+      },
+      {
+        "Path": "frontend\\Kubuno.P2pnas.Web.esproj",
+        "Action": "Start"
+      }
+    ]
+  }
+]

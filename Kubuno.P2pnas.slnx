@@ -1,0 +1,21 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+  </Configurations>
+  <Folder Name="/Server/">
+    <Project Path="crates/server/Kubuno.P2pnas.Server.rsproj" Type="6c7c4cb5-6e36-4c6f-9c6f-9c6e9b4d4c13">
+      <BuildDependency Project="frontend/Kubuno.P2pnas.Web.esproj" />
+    </Project>
+  </Folder>
+  <Folder Name="/Libraries/">
+    <Project Path="crates/core/Kubuno.P2pnas.Core.rsproj" Type="6c7c4cb5-6e36-4c6f-9c6f-9c6e9b4d4c13" />
+    <Project Path="crates/p2p/Kubuno.P2pnas.P2p.rsproj" Type="6c7c4cb5-6e36-4c6f-9c6f-9c6e9b4d4c13" />
+    <Project Path="crates/store/Kubuno.P2pnas.Store.rsproj" Type="6c7c4cb5-6e36-4c6f-9c6f-9c6e9b4d4c13" />
+  </Folder>
+  <Folder Name="/Frontend/">
+    <Project Path="frontend/Kubuno.P2pnas.Web.esproj">
+      <Platform Project="AnyCPU" />
+      <Build />
+    </Project>
+  </Folder>
+</Solution>

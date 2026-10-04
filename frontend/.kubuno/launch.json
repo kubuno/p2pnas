@@ -1,0 +1,21 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "edge",
+      "request": "launch",
+      "name": "Kubuno p2pnas (Edge)",
+      "url": "http://localhost:8080/p2pnas",
+      "webRoot": "${workspaceFolder}",
+      "sourceMapPathOverrides": { "http://localhost:8080/modules/p2pnas/frontend/*": "${workspaceFolder}/dist/*" }
+    },
+    {
+      "type": "chrome",
+      "request": "launch",
+      "name": "Kubuno p2pnas (Chrome)",
+      "url": "http://localhost:8080/p2pnas",
+      "webRoot": "${workspaceFolder}",
+      "sourceMapPathOverrides": { "http://localhost:8080/modules/p2pnas/frontend/*": "${workspaceFolder}/dist/*" }
+    }
+  ]
+}
