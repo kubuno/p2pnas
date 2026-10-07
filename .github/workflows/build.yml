@@ -19,9 +19,11 @@ jobs:
       # ── Backend (Rust) ──
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with: { workspaces: server }
       - name: cargo build
+        working-directory: server
         env:
-          SQLX_OFFLINE: "true"   # requêtes runtime : pas de DB requise (cache .sqlx si présent)
+          SQLX_OFFLINE: "true"   # runtime queries: no database needed (.sqlx cache if any)
         run: cargo build --release --bin kubuno-p2pnas
 
       # ── Frontend (bundle du module) ──
@@ -29,7 +31,7 @@ jobs:
         with:
           node-version: 24
       - name: build frontend
-        working-directory: frontend
+        working-directory: web
         run: |
           npm ci
           npm run build

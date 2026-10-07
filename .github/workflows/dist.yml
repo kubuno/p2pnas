@@ -23,10 +23,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: x86_64-pc-windows-msvc }
       - uses: Swatinem/rust-cache@v2
+        with: { workspaces: server }
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
-      # build_kbpkg.sh compile le binaire (cross msvc via TARGET) + le frontend,
-      # puis empaquette. Le serveur sait déballer ce ZIP sans outil externe.
+      # build_kbpkg.sh builds the server (cross msvc through TARGET) and the web frontend,
+      # then packages them. The core unpacks this ZIP with no external tool.
       # SQLCipher builds OpenSSL from source, and openssl-src drives that build
       # with Perl. Under `shell: bash` the MSYS perl comes first in PATH and is
       # missing Locale::Maketext::Simple, so the build died halfway through and
@@ -52,6 +53,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: aarch64-apple-darwin }
       - uses: Swatinem/rust-cache@v2
+        with: { workspaces: server }
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
       - run: bash build_kbpkg.sh

@@ -2,7 +2,9 @@
 *.deb
 /dist/
 .build_number
-frontend/dist/
-frontend/node_modules/
-frontend/tsconfig.tsbuildinfo
+web/dist/
+web/node_modules/
+web/tsconfig.tsbuildinfo
 
+# Visual Studio per-machine state
+.vs/

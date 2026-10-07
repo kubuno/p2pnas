@@ -43,17 +43,18 @@ the loss of several of them. Administrators allocate per-user quotas.
 
 ```
 core (kubuno/core)  ──proxy──►  kubuno-p2pnas (this repo, :3123)
-                                  ├─ crates/core    chunker · crypto · erasure · pipeline
-                                  ├─ crates/store   encrypted manifest (SQLCipher)
-                                  ├─ crates/p2p     peer network, discovery, shard exchange
-                                  └─ crates/server  Axum API, admin pages, registers with the core
+                                  ├─ server/crates/core    chunker · crypto · erasure · pipeline
+                                  ├─ server/crates/store   encrypted manifest (SQLCipher)
+                                  ├─ server/crates/p2p     peer network, discovery, shard exchange
+                                  └─ server/crates/server  Axum API, admin pages, registers with the core
 ```
 
 - **In-process** pipeline and P2P network — no separate daemon.
 - **One node identity** (a generated key); per-user isolation is logical (manifest namespace) and cryptographic (per-owner keys).
 - **SQLCipher manifest** — the encrypted file / chunk / shard index, source of truth for the data.
 - **Control plane** — quotas, peers, jobs and events in the `p2pnas` schema of the instance database.
-- **Frontend** — `frontend/`: the "My Cloud" mount for Drive and the admin views, loaded at runtime by the core.
+- **Web** — `web/`: the "My Cloud" mount for Drive and the admin views, loaded at runtime by the core.
+- **Mobile** — `mobile/`: reserved for the mobile apps (see `mobile/README.md`).
 
 Performance findings for the core pipeline are in [`BENCHMARKS.md`](BENCHMARKS.md).
 
@@ -79,16 +80,16 @@ A `.kbpkg` is attached to every tagged [GitHub Release](https://github.com/kubun
 **Requirements:** Rust ≥ 1.82, Node.js ≥ 24.
 
 ```bash
-cargo test                                    # pipeline round-trips
+cd server && cargo test                      # pipeline round-trips
 RUSTFLAGS="-C target-cpu=native" cargo bench  # performance
-cargo build --release --bin kubuno-p2pnas     # module binary
-cd frontend && npm ci && npm run build        # runtime-loaded frontend
+cd server && cargo build --release --bin kubuno-p2pnas  # module binary
+cd web && npm ci && npm run build             # runtime-loaded frontend
 bash build_kbpkg.sh                           # → dist/p2pnas-<version>-<os>-<arch>.kbpkg
 ```
 
 ## Configuration
 
-Copy `config.toml.example` → `config.toml`, or use environment variables. See `module.toml` for the manifest (id, port `3123`, admin pages, settings).
+Copy `server/config.toml.example` → `server/config.toml`, or use environment variables. See `module.toml` for the manifest (id, port `3123`, admin pages, settings).
 
 ## Tech stack
 
