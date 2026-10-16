@@ -22,7 +22,7 @@ pub struct BackupParams {
     pub passphrase: String,
 }
 
-/// `GET /admin/backup?passphrase=…` — download an encrypted cold-storage bundle
+/// `GET /admin/backup?passphrase=…` - download an encrypted cold-storage bundle
 /// {identity + manifest snapshot}. The admin keeps it OFF the node; it is the
 /// only thing that can bring a dead node back, so the response is never cached.
 pub async fn backup_export(
@@ -48,7 +48,7 @@ pub async fn backup_export(
         .into_response())
 }
 
-/// `POST /admin/restore?passphrase=…` with the bundle as the raw request body —
+/// `POST /admin/restore?passphrase=…` with the bundle as the raw request body -
 /// recover onto a FRESH node. Refuses if this node already holds data. The module
 /// must be restarted afterwards to load the restored identity and manifest.
 pub async fn backup_restore(
@@ -69,11 +69,11 @@ pub async fn backup_restore(
     })))
 }
 
-/// `GET /admin/manifest-backup` — state of the AUTOMATIC distributed backup: the
+/// `GET /admin/manifest-backup` - state of the AUTOMATIC distributed backup: the
 /// versions this node believes it has pushed onto its peers, most recent first.
 ///
-/// Informational only. The restore never trusts this list — it re-derives the
-/// fragment ids and asks the peers — but it is what tells an administrator, at a
+/// Informational only. The restore never trusts this list - it re-derives the
+/// fragment ids and asks the peers - but it is what tells an administrator, at a
 /// glance, whether the safety net is actually being woven.
 pub async fn manifest_backup_status(State(st): State<AppState>) -> Result<Json<Value>> {
     Ok(Json(json!({
@@ -82,7 +82,7 @@ pub async fn manifest_backup_status(State(st): State<AppState>) -> Result<Json<V
     })))
 }
 
-/// `POST /admin/manifest-backup` — run the distributed backup now instead of
+/// `POST /admin/manifest-backup` - run the distributed backup now instead of
 /// waiting for the daily ticker. Enqueued rather than executed inline: vacuuming
 /// and uploading a large manifest is not something to hold an HTTP request open
 /// for, and the job kind coalesces so a double click costs nothing.
@@ -97,7 +97,7 @@ pub struct ManifestRestoreBody {
     ///
     /// Required when the control-plane database went down with the node: without
     /// at least one peer there is nobody to ask, whatever the node key can
-    /// compute. They are ordinary public addresses — nothing secret to keep.
+    /// compute. They are ordinary public addresses - nothing secret to keep.
     #[serde(default)]
     pub peers:         Vec<String>,
     /// Restore one specific day number instead of the most recent recoverable
@@ -109,7 +109,7 @@ pub struct ManifestRestoreBody {
     pub lookback_days: Option<u64>,
 }
 
-/// `POST /admin/manifest-backup/restore` — rebuild `manifest.db` from the shards
+/// `POST /admin/manifest-backup/restore` - rebuild `manifest.db` from the shards
 /// held by the peers, on a fresh node that has `identity.key` back.
 ///
 /// Refuses on a node that already holds files. Runs inline: the administrator is
@@ -266,7 +266,7 @@ pub struct AddPeer {
     #[serde(default)]
     pub peer_id: Option<String>,
     /// Extra days of retention this node grants THIS peer on top of the instance
-    /// policy — how generous we choose to be with someone we know (a machine we
+    /// policy - how generous we choose to be with someone we know (a machine we
     /// know is often powered off, say). Omitted leaves the current value; posting
     /// the same peer again is how an operator adjusts it.
     #[serde(default)]
@@ -285,7 +285,7 @@ pub async fn add_peer(State(st): State<AppState>, Json(body): Json<AddPeer>) -> 
     // `handshake_verified` rather than `handshake`: a peer added by hand is exactly
     // the one whose key we most want pinned, and pinning only happens on a
     // handshake WE initiate. A peer too old to prove itself still registers, with
-    // no key — it simply stays unpinned until it can.
+    // no key - it simply stays unpinned until it can.
     let (peer_id, api_port, status, public_key) =
         match body.peer_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             // Offline registration: no handshake, so nothing to prove yet.
@@ -364,7 +364,7 @@ pub async fn add_peer(State(st): State<AppState>, Json(body): Json<AddPeer>) -> 
     if !applied {
         tracing::warn!(peer_id, addr, "add_peer refused: a different public key is pinned for this peer");
         return Err(P2pError::BadRequest(
-            "ce pair est déjà enregistré avec une autre clé publique — vérifiez l'adresse".into(),
+            "ce pair est déjà enregistré avec une autre clé publique - vérifiez l'adresse".into(),
         ));
     }
 
@@ -382,7 +382,7 @@ pub async fn run_repair(State(st): State<AppState>) -> Result<Json<Value>> {
     Ok(Json(json!({ "repair": report })))
 }
 
-/// Enqueue a locality rebalance (admin only) — heals losses, then re-homes shards
+/// Enqueue a locality rebalance (admin only) - heals losses, then re-homes shards
 /// toward the latency-optimal layout. Non-blocking; the worker runs it.
 pub async fn rebalance(State(st): State<AppState>) -> Result<Json<Value>> {
     crate::jobs::enqueue(&st.db, "rebalance_locality", json!({ "reason": "manual" })).await;

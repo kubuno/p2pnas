@@ -2,7 +2,7 @@
 //! in the console.
 //!
 //! Declared by `module.toml`'s `[[settings]]`, stored in `core.settings`, and
-//! read back here through `/internal/modules/p2pnas/settings` — a module owns its
+//! read back here through `/internal/modules/p2pnas/settings` - a module owns its
 //! own schema and cannot read the core's tables, and a background worker (the
 //! repair loop) has no user token for the public config route. The module is
 //! named in the URL so the read works whether the instance shares one master
@@ -49,10 +49,10 @@ pub struct InstanceConfig {
     /// host acts on the data it stores for that owner. These are the network's
     /// backbone (an instance-wide setting); each is stretched per-owner by how
     /// reliable that owner has been (see `retention`), which is the "margin".
-    ///   grace   — stop placing new shards on/for them; nothing is removed yet.
-    ///   reclaim — shed the PARITY shards we host for them (data still fully
+    ///   grace   - stop placing new shards on/for them; nothing is removed yet.
+    ///   reclaim - shed the PARITY shards we host for them (data still fully
     ///             reconstructs the file, so this is reversible).
-    ///   evict   — remove everything we host for them.
+    ///   evict   - remove everything we host for them.
     pub retention_grace_days:   i64,
     pub retention_reclaim_days: i64,
     pub retention_evict_days:   i64,
@@ -71,7 +71,7 @@ impl Default for InstanceConfig {
             peer_down_threshold:  5,
             jurisdiction_allow:   Vec::new(),
             // Generous by default: a fortnight of grace, six weeks before parity
-            // is shed, half a year before full eviction — and reliable owners get
+            // is shed, half a year before full eviction - and reliable owners get
             // more still. Absence is not assumed to be bad faith.
             retention_grace_days:   14,
             retention_reclaim_days: 45,
@@ -133,7 +133,7 @@ impl InstanceConfig {
 }
 
 /// An integer setting, accepted only inside `[lo, hi]`. `None` for anything
-/// missing, unparseable or out of range — the caller then keeps its compiled
+/// missing, unparseable or out of range - the caller then keeps its compiled
 /// default rather than a value nobody meant.
 fn int_in(settings: &Value, key: &str, lo: i64, hi: i64) -> Option<i64> {
     settings
@@ -153,7 +153,7 @@ fn int_in(settings: &Value, key: &str, lo: i64, hi: i64) -> Option<i64> {
 /// Entries are upper-cased and de-duplicated, and NOTHING is dropped for looking
 /// wrong: an unrecognised entry simply matches no peer, which makes the list
 /// STRICTER. Silently discarding it could empty the list and hand the decision
-/// back to `config.toml` — the one outcome that would loosen the constraint.
+/// back to `config.toml` - the one outcome that would loosen the constraint.
 fn parse_country_list(raw: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for line in raw.lines() {

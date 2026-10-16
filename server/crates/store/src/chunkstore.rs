@@ -9,7 +9,7 @@ use crate::error::{Result, StoreError};
 
 /// A fragment id is `blake3(...)[..16]` hex-encoded (see `manifest::fragment_id`):
 /// exactly 32 lowercase hex characters, always. Anything else is either a bug or,
-/// far more dangerously, a path-traversal attempt — the id reaches this store
+/// far more dangerously, a path-traversal attempt - the id reaches this store
 /// straight from the P2P wire (`GetShard`/`StoreShard`/`DeleteShard`), so a value
 /// like `/…/identity/identity.key` or `../manifest.db` would otherwise let an
 /// unauthenticated peer read the node's master key or overwrite arbitrary files

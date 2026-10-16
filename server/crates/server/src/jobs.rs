@@ -1,7 +1,7 @@
 //! Background job queue (PostgreSQL `p2pnas.jobs`, claimed with `FOR UPDATE SKIP
 //! LOCKED`). Repair runs are enqueued (by the periodic ticker, or on demand) and
-//! processed by a worker, so concurrent triggers — or several module instances
-//! sharing the database — never run the same repair twice.
+//! processed by a worker, so concurrent triggers - or several module instances
+//! sharing the database - never run the same repair twice.
 
 use std::time::{Duration, Instant};
 
@@ -68,7 +68,7 @@ pub async fn enqueue(db: &DbPool, kind: &str, payload: Value) {
         )
     };
     match db.execute(sql, params).await {
-        Ok(0) => tracing::debug!(kind, "job already pending — not enqueued again"),
+        Ok(0) => tracing::debug!(kind, "job already pending - not enqueued again"),
         Ok(_) => {}
         Err(e) => tracing::warn!(kind, error = %e, "failed to enqueue job"),
     }
@@ -150,7 +150,7 @@ async fn run_gc_remote(st: &AppState, payload: Value) -> bool {
 /// now the portable form: pick a candidate id, then a conditional
 /// `UPDATE ... WHERE id = ? AND state = 'pending'` whose success is decided by
 /// `rows_affected == 1`. If another worker won the row (0 rows), retry with the
-/// next candidate. This is the only race-safe claim across the three engines —
+/// next candidate. This is the only race-safe claim across the three engines -
 /// `SKIP LOCKED` is not portable, and a lock taken outside a transaction
 /// guarantees nothing.
 async fn claim(db: &DbPool) -> Option<(i64, String, Value)> {
@@ -181,7 +181,7 @@ async fn claim(db: &DbPool) -> Option<(i64, String, Value)> {
             .inspect_err(|e| tracing::error!(error = %e, "failed to claim a job"))
             .unwrap_or(0);
         if claimed != 1 {
-            // Lost the row to a concurrent worker — look for another candidate.
+            // Lost the row to a concurrent worker - look for another candidate.
             continue;
         }
 
@@ -266,7 +266,7 @@ async fn purge_old_rows(db: &DbPool) {
 /// Worker loop: claim and run jobs; idle-poll when the queue is empty.
 ///
 /// Housekeeping (recovering crashed jobs, purging finished ones) runs once at
-/// start-up — the moment a previous crash is most likely to have left debris —
+/// start-up - the moment a previous crash is most likely to have left debris -
 /// and then on a slow timer.
 pub async fn worker(st: AppState) {
     requeue_stale_jobs(&st.db).await;
@@ -308,7 +308,7 @@ pub async fn worker(st: AppState) {
                     }
                     // Distributed backup of the manifest: snapshot, seal,
                     // erasure-code, push onto the peers, prune the aged-out
-                    // versions. Always reports success — a failed pass is an
+                    // versions. Always reports success - a failed pass is an
                     // event and a log line, not a job to retry in a loop, since
                     // the next daily run is the natural retry.
                     "manifest_backup" => {
@@ -324,7 +324,7 @@ pub async fn worker(st: AppState) {
                         true
                     }
                     // Reclaims trashed files and superseded versions past their
-                    // retention window — locally and on the peers hosting them.
+                    // retention window - locally and on the peers hosting them.
                     "gc_trash" => {
                         crate::handlers::files::purge_retired_now(&st).await;
                         true

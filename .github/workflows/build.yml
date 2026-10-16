@@ -39,7 +39,7 @@ jobs:
       # ── Paquet Kubuno (.kbpkg) ──
       # The one format a module ships and the server installs, identical on
       # every system: built from the binary and frontend produced above, and
-      # unpacked by the server with no external tool — same install on Linux,
+      # unpacked by the server with no external tool - same install on Linux,
       # Windows and macOS. No Debian package is produced any more.
       - name: build .kbpkg
         run: bash build_kbpkg.sh --skip-build

@@ -23,7 +23,7 @@ jobs:
         with: { workspaces: server }
       # clippy --all-targets also compiles the test code (catching test
       # build breakage). Running the backend suites needs a Postgres service
-      # per repo — wired as a follow-up.
+      # per repo - wired as a follow-up.
       - name: clippy (deny warnings)
         working-directory: server
         run: cargo clippy --all-targets -- -D warnings

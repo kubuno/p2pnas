@@ -65,7 +65,7 @@ pub fn process(
 /// Run the pipeline under the **v2** scheme: the subkey is bound to `user_id`
 /// and every chunk's tag authenticates (scheme, user, file, chunk_count, index).
 ///
-/// Same output shape as [`process`] — only the key and the tag change — so the
+/// Same output shape as [`process`] - only the key and the tag change - so the
 /// storage layer stores it identically, plus the file's `key_scheme`.
 pub fn process_v2(
     data: &[u8],
@@ -80,7 +80,7 @@ pub fn process_v2(
 /// Number of chunks [`process_with_scheme`] will produce for `len` bytes.
 ///
 /// The v2 AAD binds the total chunk count, which must therefore be known *before*
-/// sealing the first chunk — hence this closed form rather than a count taken
+/// sealing the first chunk - hence this closed form rather than a count taken
 /// after the fact. It has to agree exactly with `par_chunks(chunk_size)`.
 pub fn chunk_count_for(len: usize, chunk_size: usize) -> Result<u64, CoreError> {
     if chunk_size == 0 {
@@ -213,7 +213,7 @@ mod tests {
         assert_eq!(reassemble_v2(b"user-a", b"file-3", &key, &chunks).unwrap(), data);
 
         // Another user's identity must not open it, even with the right file id
-        // and the same node key — this is the isolation the audit asked for.
+        // and the same node key - this is the isolation the audit asked for.
         assert!(reassemble_v2(b"user-b", b"file-3", &key, &chunks).is_err());
         // Nor may a v1 reader: the schemes derive different subkeys.
         let count = chunks.len() as u64;

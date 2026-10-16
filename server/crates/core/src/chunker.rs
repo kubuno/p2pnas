@@ -1,6 +1,6 @@
 //! Chunking + *gated* compression.
 //!
-//! ptopnas ran `zstd::encode_all(level 3)` on **every** chunk — including already
+//! ptopnas ran `zstd::encode_all(level 3)` on **every** chunk - including already
 //! compressed media, where it burns CPU for zero gain and caps the whole pipeline
 //! at zstd's throughput. Here a cheap **entropy probe** on a small sample decides
 //! whether compression is even worth attempting, and we use a fast level.
@@ -11,8 +11,8 @@ pub const DEFAULT_CHUNK_SIZE: usize = 4 * 1024 * 1024; // 4 MiB
 ///
 /// Level 3 rather than 1: this is a STORAGE codec, not a local benchmark. The
 /// entropy gate already skips incompressible chunks, so level 3 only runs where
-/// it pays off, and BENCHMARKS.md shows zstd-3 sustaining ~1.7 GiB/s — orders of
-/// magnitude above any real uplink — for ~10-15% better ratio than level 1 on
+/// it pays off, and BENCHMARKS.md shows zstd-3 sustaining ~1.7 GiB/s - orders of
+/// magnitude above any real uplink - for ~10-15% better ratio than level 1 on
 /// compressible data. Every byte saved is a byte not stored on a host and not
 /// sent over the wire. Decompression is self-describing, so raising the level
 /// leaves every previously-stored chunk readable.
@@ -50,7 +50,7 @@ pub fn sample_entropy(sample: &[u8]) -> f64 {
 pub fn maybe_compress(data: Vec<u8>, entropy_skip: f64, level: i32) -> (Vec<u8>, bool) {
     let sample = &data[..data.len().min(ENTROPY_SAMPLE)];
     if sample_entropy(sample) >= entropy_skip {
-        return (data, false); // incompressible — don't even try
+        return (data, false); // incompressible - don't even try
     }
     match zstd::encode_all(&data[..], level) {
         Ok(c) if c.len() < data.len() => (c, true),
@@ -67,7 +67,7 @@ pub fn restore(data: &[u8], is_compressed: bool) -> std::io::Result<Vec<u8>> {
     }
 }
 
-/// Split a byte slice into owned 4 MiB chunks (one copy — models a disk read).
+/// Split a byte slice into owned 4 MiB chunks (one copy - models a disk read).
 pub fn split_chunks(data: &[u8], chunk_size: usize) -> Vec<Vec<u8>> {
     data.chunks(chunk_size).map(|c| c.to_vec()).collect()
 }

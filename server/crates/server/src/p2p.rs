@@ -101,7 +101,7 @@ pub struct P2pShardHandler {
     pub api_port: u16,
     pub store:    Arc<ChunkStore>,
     pub db:       DbPool,
-    /// Key proving this node owns `peer_id` — see [`node_signer`]. `None`
+    /// Key proving this node owns `peer_id` - see [`node_signer`]. `None`
     /// disables the authenticated handshake for this node.
     pub signer:   Option<Arc<PeerSigner>>,
 }
@@ -141,7 +141,7 @@ impl P2pShardHandler {
             }
             tracing::warn!(
                 owner_peer_id,
-                "accepting an UNAUTHENTICATED shard operation — the peer id is only declared; \
+                "accepting an UNAUTHENTICATED shard operation - the peer id is only declared; \
                  set P2PNAS_STRICT_PEER_AUTH=1 once every peer has been upgraded"
             );
             return true;
@@ -181,13 +181,13 @@ impl P2pShardHandler {
                     tracing::warn!(owner_peer_id, "rejecting shard operation: no public key pinned for this peer (strict peer auth)");
                     return false;
                 }
-                tracing::warn!(owner_peer_id, "shard operation from a peer with no pinned public key — accepted in permissive mode");
+                tracing::warn!(owner_peer_id, "shard operation from a peer with no pinned public key - accepted in permissive mode");
                 true
             }
             Some((Some(known),)) if known == caller.public_key => true,
             Some((Some(_),)) => {
                 // The caller proved a key, but not the one we pinned: this is an
-                // impersonation attempt (or a peer whose identity key was reset —
+                // impersonation attempt (or a peer whose identity key was reset -
                 // an operator then has to clear `p2pnas.peers.public_key` for it).
                 tracing::warn!(owner_peer_id, "rejecting shard operation: public key does not match the pinned one");
                 false
@@ -226,7 +226,7 @@ impl ShardHandler for P2pShardHandler {
         self.store(fragment_id, owner_peer_id, shard_index, data).await
     }
 
-    /// Same gate for dropping a shard — the destructive half. `delete` still
+    /// Same gate for dropping a shard - the destructive half. `delete` still
     /// checks the recorded owner; this makes the claimed owner unforgeable.
     async fn delete_from(
         &self,
@@ -243,7 +243,7 @@ impl ShardHandler for P2pShardHandler {
     async fn store(&self, fragment_id: &str, owner_peer_id: &str, shard_index: i32, data: Vec<u8>) -> bool {
         // Transport size (what arrived on the wire) guards the frame; the on-disk
         // COST (whole filesystem blocks, since each shard is its own file) is what
-        // the capacity accounting must use — counting the raw length let this node
+        // the capacity accounting must use - counting the raw length let this node
         // accept far more than it could actually hold.
         let size = data.len() as i64;
         let disk_cost = p2pnas_core::erasure::shard_disk_cost(data.len()) as i64;
@@ -324,7 +324,7 @@ impl ShardHandler for P2pShardHandler {
     }
 
     async fn get(&self, fragment_id: &str) -> Option<Vec<u8>> {
-        // Only serve shards we actually host FOR a peer — never this node's own
+        // Only serve shards we actually host FOR a peer - never this node's own
         // shards. Together with fragment-id validation (which blocks reading
         // arbitrary files), this means a `GetShard` can only ever return a
         // ciphertext shard that was legitimately placed here.
@@ -352,7 +352,7 @@ impl ShardHandler for P2pShardHandler {
     async fn delete(&self, fragment_id: &str, owner_peer_id: &str) -> bool {
         // Only the peer we host this shard FOR may delete it. Previously the
         // owner was ignored, so any node that learned a fragment_id could erase
-        // it — destroying redundancy for free and, once enough copies were gone,
+        // it - destroying redundancy for free and, once enough copies were gone,
         // making the chunk permanently unrecoverable. We match the claimed owner
         // against the row we recorded at StoreShard time.
         //
@@ -409,7 +409,7 @@ mod tests {
 
     /// Locks the P2P identity to the node master key. The public key is what
     /// every peer pins on first encounter, so a change here would make an
-    /// upgraded node look like an impostor to the whole network — exactly the
+    /// upgraded node look like an impostor to the whole network - exactly the
     /// situation `authorize_owner` refuses.
     ///
     /// Vectors: HKDF-SHA256(salt = "p2pnas/file-subkey/v1", ikm = 0x00..0x1f,

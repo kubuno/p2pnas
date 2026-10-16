@@ -1,4 +1,4 @@
-# Kubuno P2pnas — mobile apps
+# Kubuno P2pnas - mobile apps
 
 Reserved for the mobile clients of the P2pnas module, organised like the other platforms of this repository:
 

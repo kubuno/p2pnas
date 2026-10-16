@@ -1,4 +1,4 @@
-//! Automatic distributed backup of the manifest — and the disaster recovery that
+//! Automatic distributed backup of the manifest - and the disaster recovery that
 //! makes it worth having.
 //!
 //! The cold bundle (`GET /admin/backup`) already protects a node whose
@@ -6,13 +6,13 @@
 //! didn't: once a day the node vacuums a consistent snapshot of `manifest.db`,
 //! seals it under a key derived from its own master key, erasure-codes it into
 //! the same 10+4 scheme as user data, and pushes the 14 shards onto the peers it
-//! already trusts. Nothing is kept locally — the disk we are insuring against is
+//! already trusts. Nothing is kept locally - the disk we are insuring against is
 //! precisely the one that dies.
 //!
 //! The addressing is what makes recovery possible at all: fragment ids are
 //! `blake3(domain ‖ peer_id ‖ version ‖ shard_index)`, and `peer_id` re-derives
 //! from `identity.key`. A brand-new machine holding only that 32-byte file can
-//! therefore recompute every id of every recent backup and simply ask around —
+//! therefore recompute every id of every recent backup and simply ask around -
 //! no manifest, no database, no notes. See `p2pnas_store::backup` for the format.
 //!
 //! Two problems have no purely technical answer, and are handled by policy:
@@ -21,7 +21,7 @@
 //!     control plane, which a disaster may or may not have taken down with the
 //!     node. If it survived, `p2pnas.peers` is used as-is. If it didn't, the
 //!     restore accepts a list of addresses from the administrator (`peers` in the
-//!     request body) — the one piece of knowledge a human has to keep, and it is
+//!     request body) - the one piece of knowledge a human has to keep, and it is
 //!     public information, unlike the key.
 //!   - **Which version is the latest?** Versions are day numbers, so the restore
 //!     walks candidates backwards from today until it finds one whose shards are
@@ -44,8 +44,8 @@ use crate::{
 
 /// How many daily versions stay on the peers.
 ///
-/// One week. The point of keeping more than one is not redundancy — erasure
-/// coding already provides that — but *time*: a manifest that gets damaged and
+/// One week. The point of keeping more than one is not redundancy - erasure
+/// coding already provides that - but *time*: a manifest that gets damaged and
 /// then faithfully backed up in its damaged state is only recoverable if an
 /// earlier copy is still around, and a week is the shortest window in which a
 /// human plausibly notices and reacts. Beyond that the copies are pure cost, paid
@@ -59,7 +59,7 @@ const KEEP_VERSIONS: u64 = 7;
 /// versions were written: the events table is itself purged after 30 days. A
 /// 30-day trailing window means a node offline for up to a month still cleans up
 /// everything it left behind when it comes back. Older orphans, if a node stays
-/// dark for longer, are reclaimed by the hosts' own retention sweep — the same
+/// dark for longer, are reclaimed by the hosts' own retention sweep - the same
 /// backstop that covers its ordinary shards.
 const SWEEP_DEPTH: u64 = 30;
 
@@ -83,7 +83,7 @@ pub struct ManifestBackupReport {
     pub blob_bytes:     usize,
     pub shards_placed:  usize,
     pub peers_used:     usize,
-    /// True once at least `DATA_SHARDS` shards are out there — the point from
+    /// True once at least `DATA_SHARDS` shards are out there - the point from
     /// which this version is actually recoverable.
     pub recoverable:    bool,
     pub versions_swept: usize,
@@ -108,7 +108,7 @@ type ReachablePeers = Vec<(String, String)>;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Run one backup pass. Best-effort by design: every failure is logged and
-/// recorded as an event, never propagated — a job that fails loudly once a day is
+/// recorded as an event, never propagated - a job that fails loudly once a day is
 /// a job an operator learns to ignore.
 pub async fn run_backup(st: &AppState) -> ManifestBackupReport {
     let version = backup::manifest_backup_version_now();
@@ -128,7 +128,7 @@ pub async fn run_backup(st: &AppState) -> ManifestBackupReport {
     if peers.is_empty() {
         tracing::warn!(
             version,
-            "manifest backup: no reachable peer — the manifest is NOT protected against a disk loss"
+            "manifest backup: no reachable peer - the manifest is NOT protected against a disk loss"
         );
         emit(st, "manifest_backup_failed", json!({ "version": version, "reason": "no reachable peer" })).await;
         return rep;
@@ -161,7 +161,7 @@ pub async fn run_backup(st: &AppState) -> ManifestBackupReport {
             version,
             shard_bytes,
             limit = MAX_PEER_SHARD_BYTES,
-            "manifest backup: the snapshot is too large for a peer to host — every placement would be refused"
+            "manifest backup: the snapshot is too large for a peer to host - every placement would be refused"
         );
         emit(st, "manifest_backup_failed", json!({ "version": version, "reason": "snapshot too large for the shard size limit" })).await;
         return rep;
@@ -171,7 +171,7 @@ pub async fn run_backup(st: &AppState) -> ManifestBackupReport {
     // one day to the next). With ≥ 4 peers no host ends up with more than
     // PARITY_SHARDS shards, which is the same single-failure invariant the repair
     // pass enforces for user data. With fewer, the backup still protects against
-    // the case it exists for — OUR disk dying — and that is the honest trade.
+    // the case it exists for - OUR disk dying - and that is the honest trade.
     for (i, shard) in built.shards.iter().enumerate() {
         let (peer_id, addr) = &peers[i % peers.len()];
         let frag = backup::manifest_backup_fragment_id(&st.identity.peer_id, version, i);
@@ -243,7 +243,7 @@ async fn already_placed(st: &AppState, version: u64) -> bool {
         Err(e) => {
             // Losing this check only costs a redundant pass; refusing to back up
             // because a SELECT failed would cost the backup itself.
-            tracing::warn!(error = %e, "manifest backup: could not check today's version — running anyway");
+            tracing::warn!(error = %e, "manifest backup: could not check today's version - running anyway");
             false
         }
     }
@@ -299,7 +299,7 @@ async fn place(st: &AppState, addr: &str, frag: &str, shard_index: i32, bytes: &
 /// Ask every peer to drop the shards of the versions that have aged out.
 ///
 /// Without this, a daily backup would leak a full manifest copy per day onto the
-/// peers, forever — recreating exactly the unbounded growth the shard retention
+/// peers, forever - recreating exactly the unbounded growth the shard retention
 /// work has just fixed. Deletions are addressed by the same deterministic ids, so
 /// no bookkeeping is needed to find them.
 async fn sweep_old_versions(
@@ -339,7 +339,7 @@ async fn sweep_old_versions(
     }
 }
 
-/// Append a control-plane event (best effort — an unrecorded event never stops a
+/// Append a control-plane event (best effort - an unrecorded event never stops a
 /// backup, but a failure to record one is worth a log line).
 async fn emit(st: &AppState, kind: &str, payload: Value) {
     if let Err(e) = st
@@ -381,7 +381,7 @@ pub async fn restore(
     let addrs = restore_peer_addresses(st, extra_peers).await;
     if addrs.is_empty() {
         return Err(P2pError::BadRequest(
-            "aucun pair connu : fournissez `peers` (une liste d'adresses ip:port) — sans pair, \
+            "aucun pair connu : fournissez `peers` (une liste d'adresses ip:port) - sans pair, \
              les fragments de la sauvegarde sont introuvables"
                 .into(),
         ));
@@ -405,7 +405,7 @@ pub async fn restore(
         }
         tracing::info!(version = v, shards = found.len(), "manifest restore: candidate version found");
         let Some((snapshot, used)) = fetch_and_open(st, v, &found).await else {
-            tracing::warn!(version = v, "manifest restore: version present but unusable — trying an older one");
+            tracing::warn!(version = v, "manifest restore: version present but unusable - trying an older one");
             continue;
         };
 
@@ -417,7 +417,7 @@ pub async fn restore(
             .map_err(|_| P2pError::BadRequest("écriture du manifeste impossible".into()))?
             .map_err(|e| P2pError::BadRequest(e.to_string()))?;
 
-        tracing::warn!(version = v, snapshot_bytes = snap_len, "manifest restored from peers — restart the module");
+        tracing::warn!(version = v, snapshot_bytes = snap_len, "manifest restored from peers - restart the module");
         emit(st, "manifest_restored", json!({ "version": v, "snapshot_bytes": snap_len, "shards_used": used })).await;
         return Ok(ManifestRestoreOutcome {
             version:         v,
@@ -429,7 +429,7 @@ pub async fn restore(
     }
 
     Err(P2pError::BadRequest(format!(
-        "aucune sauvegarde du manifeste retrouvée après {probed} version(s) auprès de {} pair(s) — \
+        "aucune sauvegarde du manifeste retrouvée après {probed} version(s) auprès de {} pair(s) - \
          élargissez `lookback_days` ou fournissez d'autres adresses de pairs",
         addrs.len()
     )))
@@ -446,8 +446,8 @@ async fn restore_peer_addresses(st: &AppState, extra: &[String]) -> Vec<String> 
         Ok(v) => v.into_iter().map(|(a,)| a).collect(),
         Err(e) => {
             // The chicken-and-egg case: the database went down with the node.
-            // Not fatal — the administrator can name the peers by hand.
-            tracing::warn!(error = %e, "manifest restore: peer table unavailable — using only the supplied addresses");
+            // Not fatal - the administrator can name the peers by hand.
+            tracing::warn!(error = %e, "manifest restore: peer table unavailable - using only the supplied addresses");
             Vec::new()
         }
     };
@@ -483,7 +483,7 @@ async fn probe_version(st: &AppState, addrs: &[String], version: u64) -> Vec<(us
 }
 
 /// Pull the located shards, rebuild the blob and decrypt it. `None` means this
-/// version cannot be turned back into a manifest — the caller then tries an older
+/// version cannot be turned back into a manifest - the caller then tries an older
 /// one rather than giving up.
 async fn fetch_and_open(st: &AppState, version: u64, found: &[(usize, String)]) -> Option<(Vec<u8>, usize)> {
     let mut set = tokio::task::JoinSet::new();
@@ -525,7 +525,7 @@ async fn fetch_and_open(st: &AppState, version: u64, found: &[(usize, String)]) 
 }
 
 /// The versions this node believes it has distributed, most recent first (from
-/// the control-plane event log — informational, the restore never relies on it).
+/// the control-plane event log - informational, the restore never relies on it).
 pub async fn recorded_versions(st: &AppState, limit: i64) -> Vec<Value> {
     type Row = (Value, chrono::DateTime<chrono::Utc>);
     let rows: Vec<Row> = st

@@ -33,9 +33,9 @@ patterns = [
 #
 # Each page carries two kinds of content, and they are NOT interchangeable:
 #   * live module DATA and operations (per-user quotas, contribution, peer list,
-#     repair reports) — custom React views registered by the frontend, which the
+#     repair reports) - custom React views registered by the frontend, which the
 #     console renders ABOVE the form;
-#   * instance POLICY — the scalar knobs in the [[settings]] blocks below, which
+#   * instance POLICY - the scalar knobs in the [[settings]] blocks below, which
 #     the console renders from the schema alone.
 # Every setting is filed under the group whose data it governs, so the figure and
 # the rule that produces it are read on the same page. `overview` deliberately
@@ -71,7 +71,7 @@ icon     = "Timer"
 position = 50
 
 # ── Instance policy (scope = global: administrator only) ──────────────────────
-# Sizes are in BYTES, the unit the code compares against — no hidden conversion
+# Sizes are in BYTES, the unit the code compares against - no hidden conversion
 # between what is typed here and what is checked.
 
 [[settings]]
@@ -83,7 +83,7 @@ min         = 0
 max         = 1099511627776
 unit        = "octets"
 label       = "Quota par défaut d'un nouveau compte"
-description = "Espace « My Cloud » accordé automatiquement à un compte qui n'a jamais été alloué à la main. 0 (défaut) conserve le comportement historique : tant qu'un administrateur n'a pas alloué d'espace, tout envoi est refusé. Le quota est matérialisé comme une vraie ligne d'allocation au premier envoi du compte, plafonné par la capacité contribuée encore libre à cet instant : il est donc toujours adossé à du stockage réel, il apparaît dans la liste des quotas ci-dessus, et il est compté par les garde-fous « la somme des quotas ne dépasse pas la contribution » et « la contribution ne descend pas sous l'alloué ». Si plus rien n'est disponible, aucune allocation n'est faite et l'envoi est refusé — une promesse non couverte serait pire qu'un refus."
+description = "Espace « My Cloud » accordé automatiquement à un compte qui n'a jamais été alloué à la main. 0 (défaut) conserve le comportement historique : tant qu'un administrateur n'a pas alloué d'espace, tout envoi est refusé. Le quota est matérialisé comme une vraie ligne d'allocation au premier envoi du compte, plafonné par la capacité contribuée encore libre à cet instant : il est donc toujours adossé à du stockage réel, il apparaît dans la liste des quotas ci-dessus, et il est compté par les garde-fous « la somme des quotas ne dépasse pas la contribution » et « la contribution ne descend pas sous l'alloué ». Si plus rien n'est disponible, aucune allocation n'est faite et l'envoi est refusé - une promesse non couverte serait pire qu'un refus."
 category    = "Politique de stockage"
 group       = "quotas"
 risk        = "warning"
@@ -122,7 +122,7 @@ default     = ""
 multiline   = true
 placeholder = "FR"
 label       = "Juridictions autorisées pour les fragments"
-description = "Codes pays ISO (un par ligne) où les fragments ont le droit d'être placés. Vide = ce champ ne dit rien, et c'est alors la liste du fichier de configuration (discovery.geoip_allow) qui s'applique : vider ce champ ne lève donc jamais une contrainte écrite dans le fichier. Dès qu'une liste est active, un pair dont le pays est inconnu est refusé, et si le module de cartographie qui résout les pays est indisponible, aucun fragment n'est distribué — tout reste local plutôt que de risquer une violation. Attention : plus la liste est étroite, moins il y a d'emplacements distincts, et la durabilité repose sur le nombre d'emplacements."
+description = "Codes pays ISO (un par ligne) où les fragments ont le droit d'être placés. Vide = ce champ ne dit rien, et c'est alors la liste du fichier de configuration (discovery.geoip_allow) qui s'applique : vider ce champ ne lève donc jamais une contrainte écrite dans le fichier. Dès qu'une liste est active, un pair dont le pays est inconnu est refusé, et si le module de cartographie qui résout les pays est indisponible, aucun fragment n'est distribué - tout reste local plutôt que de risquer une violation. Attention : plus la liste est étroite, moins il y a d'emplacements distincts, et la durabilité repose sur le nombre d'emplacements."
 category    = "Politique de placement"
 group       = "peers"
 risk        = "warning"
@@ -143,7 +143,7 @@ group       = "maintenance"
 # ── Conservation & réciprocité ────────────────────────────────────────────────
 # Un pair absent longtemps ne contribue plus à la pérennité des données des
 # autres. Ces seuils, en JOURS d'absence, décident quand ce nœud commence à
-# récupérer l'espace qu'il consacre à ce pair — de façon graduée et réversible,
+# récupérer l'espace qu'il consacre à ce pair - de façon graduée et réversible,
 # et d'autant plus tard que le pair a été fiable (la « marge »). Chaque hôte agit
 # localement sur ses propres fragments : aucune commande réseau ne détruit les
 # données d'autrui.
@@ -190,7 +190,7 @@ group       = "retention"
 [events]
 # Delivered by the core to POST /ipc/events (internal secret only). UserDeleted
 # purges the account's files, gives back the storage it weighed on the node, and
-# removes its quota row — the row is what keeps the capacity marked as allocated.
+# removes its quota row - the row is what keeps the capacity marked as allocated.
 subscribed = [
     "UserDeleted",
 ]

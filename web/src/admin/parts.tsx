@@ -36,13 +36,13 @@ export function eventLabel(ev: EventRow): string {
   }
   switch (ev.kind) {
     case 'chunk_unrepairable':
-      return `Chunk irrécupérable (${p.reachable_shards ?? '?'}/${p.needed ?? '?'} fragments joignables) — risque de perte de données`
+      return `Chunk irrécupérable (${p.reachable_shards ?? '?'}/${p.needed ?? '?'} fragments joignables) - risque de perte de données`
     case 'peer_down':
       return `Pair déclaré hors-ligne : ${p.peer_id ?? '?'}${p.addr ? ` (${p.addr})` : ''}`
     case 'ip_changed':
-      return `Adresse IP publique du nœud modifiée${p.ip ? ` → ${p.ip}` : ''} — rééquilibrage de proximité déclenché`
+      return `Adresse IP publique du nœud modifiée${p.ip ? ` → ${p.ip}` : ''} - rééquilibrage de proximité déclenché`
     case 'geo_unavailable':
-      return 'Juridiction exigée mais service de géolocalisation indisponible — fragments conservés en local'
+      return 'Juridiction exigée mais service de géolocalisation indisponible - fragments conservés en local'
     case 'quota_defaulted':
       return `Quota par défaut attribué au premier envoi : ${formatBytes(p.quota_bytes ?? 0)}`
     case 'user_purged':
@@ -94,7 +94,7 @@ export function PlacementMap({ pl }: { pl: FilePlacement }) {
       {/* proportional bar */}
       <div className="flex h-2.5 rounded-full overflow-hidden bg-surface-2">
         {sorted.map(l => (
-          <div key={l.id} title={`${l.id} — ${l.count} fragment(s)`}
+          <div key={l.id} title={`${l.id} - ${l.count} fragment(s)`}
             className={l.kind === 'local' ? 'bg-primary' : l.status === 'down' ? 'bg-red-400' : 'bg-green-400'}
             style={{ width: `${(l.count / total) * 100}%` }} />
         ))}

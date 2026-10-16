@@ -23,13 +23,13 @@ number at release time, and CI publishes that section as the GitHub Release note
 
 ### Added
 
-- **Choose your database engine.** The control plane — quotas, peer state, the
-  repair job queue and the event log — now runs on PostgreSQL, MySQL/MariaDB or
+- **Choose your database engine.** The control plane - quotas, peer state, the
+  repair job queue and the event log - now runs on PostgreSQL, MySQL/MariaDB or
   SQLite, whichever the administrator names in `[database] engine`, from the same
   binary. A small deployment can keep everything in a single SQLite file with no
   server to run; a large one keeps PostgreSQL. The choice is read at start-up and
   changes nothing about how the module behaves. (Your **encrypted files stay in
-  the local SQLCipher store exactly as before** — only the shared control plane
+  the local SQLCipher store exactly as before** - only the shared control plane
   moved.)
 
 ### Changed
@@ -38,7 +38,7 @@ number at release time, and CI publishes that section as the GitHub Release note
   rewritten to run identically on all three engines: the first-use peer-key pin
   guard, the "claim one job" step and the storage counters no longer rely on
   PostgreSQL-only SQL, so they behave the same whichever engine backs the node.
-  Existing PostgreSQL nodes are unaffected — their schema and data are untouched.
+  Existing PostgreSQL nodes are unaffected - their schema and data are untouched.
 
 ### Security
 
@@ -46,7 +46,7 @@ number at release time, and CI publishes that section as the GitHub Release note
   pulled in an RSA implementation vulnerable to a timing side-channel
   (RUSTSEC-2023-0071) for which no fix will ever exist. The new line does not
   depend on it at all, and it refuses any SQL string built at run time unless it
-  has been audited — every query here was checked, and the one statement that
+  has been audited - every query here was checked, and the one statement that
   was assembled at run time is now pinned to compile-time text.
 - **Encrypted-manifest library updated alongside it.** The local SQLCipher
   binding had to move up with the database driver so the two agree on a single
@@ -88,7 +88,7 @@ number at release time, and CI publishes that section as the GitHub Release note
 ### Fixed
 
 - **The project builds again outside the maintainer's workspace.** Building
-  from a fresh clone — which is what CI and any contributor does — failed
+  from a fresh clone - which is what CI and any contributor does - failed
   immediately with `failed to load source for dependency kubuno-modauth`, and
   the 0.2.0 tag therefore produced no release artifact at all. The workspace
   manifest redirected the shared Kubuno crates to a sibling checkout of the
@@ -109,10 +109,10 @@ number at release time, and CI publishes that section as the GitHub Release note
   is owner-only, and the node refuses to start if the key file is readable by
   anyone else rather than carrying on silently. The key is also flushed to disk
   on creation, so a crash right after first start can no longer leave a truncated
-  key — which would have made every previously stored file unreadable.
+  key - which would have made every previously stored file unreadable.
 - **Peers must now prove who they are.** A peer's identity was simply announced,
   and since those identifiers travel openly on the network, announcing someone
-  else's was free — which let an attacker repoint a legitimate peer's address to
+  else's was free - which let an attacker repoint a legitimate peer's address to
   itself and collect every piece of data meant for it. A peer now signs a fresh
   challenge with a key tied to its identity; the key is remembered on first
   contact, and any later handshake presenting a different key (or none) is
@@ -120,7 +120,7 @@ number at release time, and CI publishes that section as the GitHub Release note
   and are recorded as unproven, so a network can be upgraded progressively.
 - **New files are encrypted under a key tied to their owner.** A single key
   protected every user's data on an instance, so isolation between users rested
-  entirely on a database filter — one logic slip anywhere and the contents, not
+  entirely on a database filter - one logic slip anywhere and the contents, not
   just the listing, were exposed. New files derive their key from the owner's
   identity as well, and each piece now authenticates which file, which position
   and how many pieces it belongs to: a piece cannot be replayed into another
@@ -166,7 +166,7 @@ number at release time, and CI publishes that section as the GitHub Release note
   verified against the manifest hash before use.
 - **Hosted shards can only be read or deleted by their owner.** `GetShard` now
   only serves shards actually hosted for a peer (never the node's own), and
-  `DeleteShard` — previously unauthenticated — now requires the caller to match
+  `DeleteShard` - previously unauthenticated - now requires the caller to match
   the recorded owner, so a node that merely learns a shard id can no longer erase
   redundancy.
 - **The peer listener is hardened against denial of service.** Concurrent
@@ -184,7 +184,7 @@ number at release time, and CI publishes that section as the GitHub Release note
 
 - **A node now knows how much space it actually uses.** Storage was counted by
   the logical size of each piece, but every piece is a separate file that takes
-  up whole disk blocks — so a small file's real footprint was under-counted by
+  up whole disk blocks - so a small file's real footprint was under-counted by
   as much as thirty times. A node could therefore believe it had far more free
   capacity than it did, and accept to host more than it could hold. Accounting
   now rounds each piece up to whole blocks.
@@ -194,7 +194,7 @@ number at release time, and CI publishes that section as the GitHub Release note
 - **This module now installs as a Kubuno package (`.kbpkg`) only.** Its system
   packages (Debian/RPM and the Windows and macOS installers) are no longer
   built: the module is distributed as one `.kbpkg` per platform (Linux, Windows,
-  macOS) that the Kubuno server installs itself — from the admin console, or
+  macOS) that the Kubuno server installs itself - from the admin console, or
   offline with `kubuno modules:install <file>.kbpkg`.
 - **The default version history is shorter (three versions instead of ten).**
   For a system whose goal is to spend as little of its hosts' space as possible,
@@ -205,7 +205,7 @@ number at release time, and CI publishes that section as the GitHub Release note
 ### Added
 
 - **Small files no longer waste space.** Every file, however tiny, was split
-  into fourteen pieces, each a separate file taking a whole disk block — so a
+  into fourteen pieces, each a separate file taking a whole disk block - so a
   1 KiB file cost about 56 KiB on disk and fourteen index rows. Files under
   256 KiB are now transparently regrouped by a background pass into ~1 MiB
   encrypted containers, cutting that overhead from ~56× to about 1.4× and the
@@ -215,18 +215,18 @@ number at release time, and CI publishes that section as the GitHub Release note
 
 - **The node now backs its own index up to its peers, automatically.** Losing a
   node's disk used to mean losing everything, because the index of where each
-  piece of data lives existed only there — the manual export added earlier only
+  piece of data lives existed only there - the manual export added earlier only
   helped whoever remembered to run it. Once a day the node now seals a snapshot
   of that index under its own key, splits it with the same redundancy as user
   data, and spreads it across its peers, keeping the last seven days. The piece
   names are derived from the node key alone, so a fresh machine holding only that
-  key can find them again and rebuild — no prior export, and nothing secret to
+  key can find them again and rebuild - no prior export, and nothing secret to
   remember beyond the key itself (a couple of peer addresses suffice if the
   database was lost too).
 
 - **Re-uploading a file that has not changed no longer stores it again.** An
   upload identical to what is already there was stored in full as a new version,
-  charged to the quota and pushed to peers — so a sync client re-sending
+  charged to the quota and pushed to peers - so a sync client re-sending
   untouched files could multiply everything held for a user, for no new content
   at all. Identical content is now recognised and skipped.
 
@@ -234,13 +234,13 @@ number at release time, and CI publishes that section as the GitHub Release note
   to a trash you can restore from, and re-uploading a file keeps the version it
   replaced instead of destroying it. Both are listed and restorable, and are
   reclaimed automatically after 30 days for the trash, 90 days or 10 versions for
-  the history — on this node and on the peers holding their pieces. Trashed files
+  the history - on this node and on the peers holding their pieces. Trashed files
   and old versions still count against your quota, because the space really is in
   use; emptying the trash frees it immediately.
 
 - **Silent disk rot is now detected instead of waiting for a failed read.**
   Shards held on other peers were audited on every pass, but the node's own were
-  only checked for existence — a file quietly corrupted on disk was discovered
+  only checked for existence - a file quietly corrupted on disk was discovered
   when someone tried to open it. A rotating sample of local shards is now
   verified byte for byte (a full cycle each week, without re-reading the whole
   disk), and anything corrupt is rebuilt from redundancy like a normal loss.
@@ -249,18 +249,18 @@ number at release time, and CI publishes that section as the GitHub Release note
   A peer that never comes online stops contributing to everyone else's
   durability, yet kept consuming host space forever. Each host now reclaims that
   space on its own, in reversible stages keyed to how long the owner has been
-  absent — and stretched by how reliable that owner was, so a good contributor
+  absent - and stretched by how reliable that owner was, so a good contributor
   keeps its data far longer (the margin). After a grace period nothing is touched
   and no new shards are placed for it; later, only the parity shards are shed
   (the data shards still reconstruct every file, so it stays recoverable); only
   after a very long absence is everything removed. Thresholds are administrator
   settings (grace / parity-reclaim / eviction, in days), clamped into order so a
   misconfiguration can never evict before grace. Every host acts locally on its
-  own shards — there is no network command to delete another node's data.
+  own shards - there is no network command to delete another node's data.
 
 - **A node can now be backed up and restored, so its disk dying no longer means
   losing everything.** The manifest is the only record of where each user's data
-  lives, and `identity.key` is the root of every key — until now neither was
+  lives, and `identity.key` is the root of every key - until now neither was
   saved anywhere, so a dead node's disk meant total, irreversible loss even
   though most shards still lived on peers. An administrator can now download an
   encrypted cold-storage bundle (`GET /admin/backup`, protected by a passphrase)
@@ -273,7 +273,7 @@ number at release time, and CI publishes that section as the GitHub Release note
 
 - **A file's pieces are now spread across failure zones, not just across peers.**
   Placement favoured the nearest peers and only limited how many pieces one peer
-  could hold — but the nearest peers are often the same home, the same box, the
+  could hold - but the nearest peers are often the same home, the same box, the
   same power strip, so one local outage could take out more pieces than the
   redundancy tolerates. Placement now also limits how many pieces sit in one
   network zone, and prefers the hosts that have proven the most dependable. The
@@ -283,7 +283,7 @@ number at release time, and CI publishes that section as the GitHub Release note
 - **Downloading is far faster when peers are slow or offline.** A read waited for
   all fourteen pieces of every chunk although ten are enough to rebuild it, kept
   trying peers already known to be offline, and handled chunks strictly one after
-  another — so a single unreachable peer added its timeout to every chunk, adding
+  another - so a single unreachable peer added its timeout to every chunk, adding
   minutes to a large file. Reads now start every fetch at once, stop as soon as
   enough verified pieces have arrived, skip peers known to be down, work on
   several chunks at a time, and give up quickly on a host that does not answer.
@@ -292,7 +292,7 @@ number at release time, and CI publishes that section as the GitHub Release note
 
 - **Repairs no longer restart every time a peer is briefly offline.** A peer that
   did not answer at that exact second had everything it held re-replicated
-  elsewhere — for machines switched off overnight, that meant re-copying the
+  elsewhere - for machines switched off overnight, that meant re-copying the
   whole network every day, and the returning peer's copies became orphans. A
   shard is now only re-replicated once its host is durably absent, unless the
   file has too little redundancy left to wait, in which case it is repaired at
@@ -331,7 +331,7 @@ number at release time, and CI publishes that section as the GitHub Release note
   column, every integrity check would have passed unconditionally, silently.
   Failures are now reported.
 - **An unreadable index is no longer reported as "file not found".** A genuine
-  read error — corruption, a wrong key, a disk problem — was turned into an empty
+  read error - corruption, a wrong key, a disk problem - was turned into an empty
   answer, so a damaged manifest looked like an empty account.
 - **The documented port was wrong** (3119 instead of 3123).
 
@@ -344,7 +344,7 @@ number at release time, and CI publishes that section as the GitHub Release note
 
 - **p2pnas no longer queries the server from the sign-in screen.** The host
   loads every module before anyone signs in, so the module asked for the
-  connected user's quota while there was no session — a request that could only
+  connected user's quota while there was no session - a request that could only
   be rejected. It now waits until someone is actually signed in, then checks the
   quota as before.
 
@@ -355,11 +355,11 @@ number at release time, and CI publishes that section as the GitHub Release note
   release; the lockfile now takes the version that replaced it.
 - **The package could not be built where `zip` is absent.** The Windows job of
   the continuous integration has no `zip`, so the Windows package was simply lost
-  the first time it was attempted — a script failure, not a build failure. The
+  the first time it was attempted - a script failure, not a build failure. The
   builder now falls back to 7-Zip, then to PowerShell.
 ### Added
 
-- **This module now ships a `.kbpkg`** — the single package format a Kubuno
+- **This module now ships a `.kbpkg`** - the single package format a Kubuno
   server installs by itself, the same file on Linux, Windows and macOS. It
   carries the same binary, interface and manifest as the system packages,
   arranged the way the server expects to find a module on disk, plus a
@@ -373,10 +373,10 @@ number at release time, and CI publishes that section as the GitHub Release note
 
 - **A built package could be thrown away instead of published.** The job that
   attaches a package to the release waited ten minutes for another workflow to
-  create that release, then gave up with "release never appeared — build.yml
+  create that release, then gave up with "release never appeared - build.yml
   likely failed". The diagnosis was wrong: on a repository whose `.deb` takes
   longer than ten minutes to build, the release simply did not exist yet, and a
   package that had built perfectly was discarded. The job now creates the release
   itself when it is missing, so it no longer depends on another workflow
-  finishing first — which also means this repository, which has no `build.yml`
+  finishing first - which also means this repository, which has no `build.yml`
   at all, can publish its packages for the first time.

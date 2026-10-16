@@ -161,7 +161,7 @@ mod tests {
         assert!(!peer.is_authenticated());
         assert_eq!(peer.peer_id, "node-b");
 
-        // And a write still goes through, unattributed — the transition mode the
+        // And a write still goes through, unattributed - the transition mode the
         // host decides to accept or refuse.
         let caller = PeerSigner::from_seed(&[33u8; 32]).unwrap();
         let msg = P2pMessage::StoreShard {

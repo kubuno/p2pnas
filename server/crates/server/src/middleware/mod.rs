@@ -8,8 +8,8 @@ use uuid::Uuid;
 use crate::{errors::P2pError, state::AppState};
 
 /// Constant-time byte-slice equality. Comparing a shared secret with `!=` returns
-/// as soon as the first differing byte is found, which leaks — through response
-/// timing — how long a common prefix the attacker guessed, letting the secret be
+/// as soon as the first differing byte is found, which leaks - through response
+/// timing - how long a common prefix the attacker guessed, letting the secret be
 /// reconstructed byte by byte. This compares every byte regardless. The length
 /// check leaks only the secret's length (a server-side constant), never content.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
@@ -25,7 +25,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 
 /// Gate the `/ipc/*` surface: those routes carry no user, so the shared internal
 /// secret is the ONLY thing standing between them and anyone who can reach the
-/// module's port. An empty configured secret is refused as well — a blank value
+/// module's port. An empty configured secret is refused as well - a blank value
 /// would otherwise let a request with a blank header through.
 pub async fn require_ipc_secret(
     State(state): State<AppState>,
@@ -69,7 +69,7 @@ const MODULE_ID: &str = "p2pnas";
 ///
 /// The plain `X-Kubuno-User-*` headers are no longer trusted: any process able
 /// to reach this module’s loopback port (`:3123`) could set them to impersonate
-/// any user — administrators included, which here means seizing another user's
+/// any user - administrators included, which here means seizing another user's
 /// files and every peer/quota control. The token binds the identity to the
 /// module secret and carries a short expiry, so a forged or replayed header is
 /// rejected. This is especially load-bearing for p2pnas, whose whole point is to

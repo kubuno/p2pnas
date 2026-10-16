@@ -2,7 +2,7 @@
 name        = "kubuno-p2pnas"
 version     = "0.1.0-alpha"
 edition     = "2021"
-description = "Kubuno p2pnas — encrypted peer-to-peer NAS module"
+description = "Kubuno p2pnas - encrypted peer-to-peer NAS module"
 license     = "AGPL-3.0-only"
 repository  = "https://github.com/kubuno/p2pnas"
 
@@ -16,7 +16,7 @@ p2pnas-store = { path = "../store" }
 p2pnas-p2p   = { path = "../p2p" }
 async-trait  = "0.1"
 
-# Per-thread-heap allocator — avoids glibc arena/mmap contention when the
+# Per-thread-heap allocator - avoids glibc arena/mmap contention when the
 # data-parallel pipeline (rayon) allocates chunk buffers across cores.
 mimalloc = "0.1"
 
@@ -48,7 +48,7 @@ toml               = "0.8"
 mdns-sd            = "0.11"
 
 
-# Shared core crates — git tags in prod, patched to a local checkout for offline dev.
+# Shared core crates - git tags in prod, patched to a local checkout for offline dev.
 kubuno-seccomp = { git = "https://github.com/kubuno/core", tag = "seccomp-v0.1.1", package = "kubuno-seccomp" }
 # Signed identity token minted by the core proxy (HMAC-SHA256, short expiry,
 # module-scoped audience). Replaces blind trust in the `X-Kubuno-User-*` headers.

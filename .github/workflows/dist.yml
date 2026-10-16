@@ -3,7 +3,7 @@ name: Distributions (.kbpkg Windows / macOS)
 # Paquet Kubuno (.kbpkg) du module pour Windows et macOS, attaché à la Release
 # GitHub sur tag v*. Complète build.yml (qui produit le .kbpkg Linux).
 #
-# Un module s'empaquette et s'installe UNIQUEMENT au format .kbpkg — le seul que
+# Un module s'empaquette et s'installe UNIQUEMENT au format .kbpkg - le seul que
 # le serveur déballe sans outil externe, donc le seul identique sur les trois
 # systèmes. Les paquets natifs (.rpm/.exe/.pkg) ne sont plus produits.
 on:

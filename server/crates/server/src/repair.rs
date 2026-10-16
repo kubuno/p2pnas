@@ -1,6 +1,6 @@
 //! Self-healing repair pass. Scans every file's shard placement, detects shards
-//! that are durably gone, and — as long as at least `DATA_SHARDS` of a chunk's 14
-//! shards are still reachable — reconstructs the chunk and re-replicates the lost
+//! that are durably gone, and - as long as at least `DATA_SHARDS` of a chunk's 14
+//! shards are still reachable - reconstructs the chunk and re-replicates the lost
 //! shards onto healthy locations (this node or a reachable peer).
 //!
 //! This is what turns the round-robin *spread* (phase 3b) into genuine durability:
@@ -13,14 +13,14 @@
 //!
 //! - **Local scrubbing.** A local shard used to be judged healthy by a bare
 //!   `exists()`, so silent bit rot on our own disk was only ever discovered when a
-//!   user tried to read the file — while remote shards were hash-audited on every
+//!   user tried to read the file - while remote shards were hash-audited on every
 //!   pass. A rotating sample of the local shards is now byte-verified against the
 //!   manifest hash; a corrupt one is treated as lost and rebuilt from parity.
 //! - **Grace period.** "Missing" used to mean "its host did not answer this
 //!   second", which turned every personal machine switched off for the night into
 //!   a full re-replication of everything it held. A shard is only re-replicated
 //!   once its host is *durably* absent (`peers.status = 'down'`, reached after
-//!   `peer_down_threshold` consecutive failed probes) — unless the chunk's live
+//!   `peer_down_threshold` consecutive failed probes) - unless the chunk's live
 //!   margin has become critical, where safety outranks the bandwidth economy.
 //! - **Priority.** Chunks are repaired least-margin-first, so the ones closest to
 //!   unrecoverable spend the shortest time exposed.
@@ -48,7 +48,7 @@ use crate::state::AppState;
 /// With 10+4, a margin of 2 means: 12 live shards or more → wait for the host to
 /// be declared `down`; 11 or fewer → repair now. Small networks (few distinct
 /// locations, so many shards per host) therefore keep repairing eagerly, which is
-/// the right call — they have no durability slack to spend.
+/// the right call - they have no durability slack to spend.
 const CRITICAL_MARGIN: usize = 2;
 
 /// Target duration of one full local scrub cycle: every local shard is byte-
@@ -59,7 +59,7 @@ const SCRUB_CYCLE_SECS: u64 = 7 * 24 * 60 * 60;
 
 /// Upper bound on the degraded chunks buffered for the priority pass. Sorting by
 /// margin needs the candidates in memory; holding *every* chunk of the node would
-/// be unbounded, so only the degraded ones are kept, and only up to this many —
+/// be unbounded, so only the degraded ones are kept, and only up to this many -
 /// past that the least endangered are dropped and picked up by the next pass
 /// (repair is idempotent and periodic, so deferring costs a pass, never data).
 const MAX_PENDING_REPAIRS: usize = 4096;
@@ -82,7 +82,7 @@ pub struct RepairReport {
     /// Local shards byte-verified against the manifest hash in this pass's scrub
     /// sample.
     pub shards_scrubbed:     usize,
-    /// Local shards the scrub found corrupt (bit rot) — rebuilt like a loss.
+    /// Local shards the scrub found corrupt (bit rot) - rebuilt like a loss.
     pub shards_corrupt:      usize,
     /// Shards left in place although unreachable, because their host is not
     /// `down` yet and the chunk still has margin to spare.
@@ -99,7 +99,7 @@ struct PeerView {
     reachable:   HashMap<String, String>,
     /// Peers whose `status` is `down` (durably absent, threshold crossed).
     down:        HashSet<String>,
-    /// Every peer_id present in the table — a shard location outside this set
+    /// Every peer_id present in the table - a shard location outside this set
     /// belongs to a peer that no longer exists for us.
     known:       HashSet<String>,
     /// peer_id → EWMA reliability score (0..100), used to break placement ties.
@@ -112,7 +112,7 @@ enum ShardState {
     /// Present and intact: verified locally (scrub sample) or hash-audited on a
     /// peer that answered.
     Live,
-    /// Its host said nothing this pass but has not crossed the down threshold —
+    /// Its host said nothing this pass but has not crossed the down threshold -
     /// presumed still holding the shard (a laptop closed for the night).
     Grace,
     /// Durably gone: host marked `down` or unknown, local file absent/corrupt, or
@@ -142,7 +142,7 @@ struct Degraded {
 }
 
 /// Orders pending repairs by margin ALONE, so a max-heap's top is the LEAST
-/// endangered chunk — exactly the one to drop when the buffer overflows.
+/// endangered chunk - exactly the one to drop when the buffer overflows.
 struct ByMargin(Degraded);
 
 impl PartialEq for ByMargin {
@@ -189,7 +189,7 @@ impl ScrubPlan {
 }
 
 /// FNV-1a: a stable, dependency-free spread of fragment ids over scrub buckets.
-/// Not cryptographic — nothing here depends on it being hard to predict.
+/// Not cryptographic - nothing here depends on it being hard to predict.
 fn fnv1a(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in bytes {
@@ -224,7 +224,7 @@ pub async fn repair_all(st: &AppState) -> RepairReport {
             // Without the peer table we cannot tell a peer that is off for the
             // night from one that is gone for good. Skipping the pass costs one
             // interval; guessing would cost a node-wide re-replication.
-            tracing::error!(error = %e, "peer table read failed — skipping repair pass");
+            tracing::error!(error = %e, "peer table read failed - skipping repair pass");
             return rep;
         }
     };
@@ -390,14 +390,14 @@ async fn assess_chunk(
 /// Decide, from the per-shard states, what to re-replicate now.
 ///
 /// A shard whose host is merely silent is NOT a loss: personal machines are off
-/// every night, and re-replicating everything they hold — only for their copies
-/// to come back as orphans in the morning — is a daily full re-replication of the
+/// every night, and re-replicating everything they hold - only for their copies
+/// to come back as orphans in the morning - is a daily full re-replication of the
 /// network. Such shards wait for their host to be declared `down`.
 ///
 /// The exception is the whole reason the grace period is safe: as soon as the
 /// count of *verified live* shards drops within `CRITICAL_MARGIN` of
 /// `DATA_SHARDS`, the chunk is one incident away from being unrecoverable, and
-/// every absent shard — graced or not — is rebuilt immediately.
+/// every absent shard - graced or not - is rebuilt immediately.
 fn plan_chunk(states: &[Option<ShardState>]) -> ChunkPlan {
     let live = states.iter().filter(|s| **s == Some(ShardState::Live)).count();
     let critical = live < DATA_SHARDS + CRITICAL_MARGIN;
@@ -491,10 +491,10 @@ async fn repair_chunk(st: &AppState, view: &PeerView, d: Degraded, rep: &mut Rep
 ///
 /// Ranked, in this order:
 /// 1. locations still under the concentration cap (`PARITY_SHARDS` shards of this
-///    chunk) — losing one location must never take the chunk below
+///    chunk) - losing one location must never take the chunk below
 ///    `DATA_SHARDS`, so this is a hard preference, not a tie-break;
 /// 2. the fewest shards of this chunk already there (spread);
-/// 3. the highest reliability score — the EWMA `record_peer_health` maintains.
+/// 3. the highest reliability score - the EWMA `record_peer_health` maintains.
 ///    At comparable load, a host that has been answering for weeks is a better
 ///    home than one that keeps flapping, and re-placing onto a flaky host is how
 ///    a repair pass ends up repairing its own repairs.
@@ -531,12 +531,12 @@ fn choose_target(
         .unwrap_or_else(|| "local".to_string())
 }
 
-/// Is a shard present AND intact where the manifest says it lives — and if not,
+/// Is a shard present AND intact where the manifest says it lives - and if not,
 /// is it durably gone or merely unreachable for now?
 ///
 /// Remote shards are proof-of-storage audited (content hash compared to the
-/// manifest), so a peer that silently corrupted/dropped the data — which a bare
-/// `HasShard` would not catch — is a loss, not a grace case: it answered, and what
+/// manifest), so a peer that silently corrupted/dropped the data - which a bare
+/// `HasShard` would not catch - is a loss, not a grace case: it answered, and what
 /// it holds is unusable.
 ///
 /// Local shards are sampled by the scrub plan: the sampled ones are read and
@@ -561,16 +561,16 @@ async fn classify_shard(
             if ok {
                 return ShardState::Live;
             }
-            // Absent OR corrupt. Only the corruption case is newsworthy — a
+            // Absent OR corrupt. Only the corruption case is newsworthy - a
             // missing file is already covered by the ordinary presence path.
             if st.store.exists(&s.fragment_id) {
                 rep.shards_corrupt += 1;
-                tracing::warn!(fragment_id = %s.fragment_id, "local shard corrupt (bit rot) — rebuilding from parity");
+                tracing::warn!(fragment_id = %s.fragment_id, "local shard corrupt (bit rot) - rebuilding from parity");
                 emit_shard_corrupt(st, s).await;
             }
             return ShardState::Lost;
         }
-        // Unsampled pass: presence only. A locally missing file is a real loss —
+        // Unsampled pass: presence only. A locally missing file is a real loss -
         // our own disk is never "temporarily unreachable".
         return if st.store.exists(&s.fragment_id) { ShardState::Live } else { ShardState::Lost };
     }
@@ -595,7 +595,7 @@ async fn classify_shard(
 /// manifest hash.
 ///
 /// The integrity check lives HERE, not just at the call sites, because this
-/// function feeds the repair path — the one place that RE-ENCODES and rewrites
+/// function feeds the repair path - the one place that RE-ENCODES and rewrites
 /// all 14 shards. Reed-Solomon in erasure mode is not error-correcting: a single
 /// present-but-tampered shard silently poisons the reconstructed cipher, the
 /// regenerated shards no longer match their stored hashes, and the file becomes
@@ -618,7 +618,7 @@ pub(crate) async fn fetch_shard(st: &AppState, reachable: &HashMap<String, Strin
         tracing::warn!(
             fragment_id = %s.fragment_id,
             location = %s.location,
-            "shard failed integrity check during repair fetch — treating as lost"
+            "shard failed integrity check during repair fetch - treating as lost"
         );
         return None;
     }
@@ -702,12 +702,12 @@ async fn record_peer_health(st: &AppState, peer_id: &str, rtt: Option<f64>) -> b
     //
     // The PostgreSQL self-join (`UPDATE ... FROM peers prev ... RETURNING
     // prev.status, p.status`) read the pre-update status and returned before/after
-    // in one statement — neither the self-join, `FROM` on UPDATE, nor `RETURNING`
+    // in one statement - neither the self-join, `FROM` on UPDATE, nor `RETURNING`
     // is portable. The portable form reads the current status, then updates,
     // inside one transaction (row-locked on PostgreSQL/MySQL, single-writer on
     // SQLite) so the read cannot race a concurrent probe. The new status is decided
     // in Rust: comparing statuses is the only way to detect the active → down
-    // crossing that survives the threshold being edited — a peer with four failures
+    // crossing that survives the threshold being edited - a peer with four failures
     // under a threshold of five, then lowered to two, still crosses exactly once.
     let greatest = crate::greatest(be);
     let lock = if be == Backend::Sqlite { "" } else { " FOR UPDATE" };
@@ -791,9 +791,9 @@ async fn detect_self_ip_change(st: &AppState, observed: HashMap<String, usize>) 
             .ok()
             .flatten();
         if recent == Some(true) {
-            tracing::info!(old = %old, new = %ip, "public IP changed but rebalanced recently — skipping (cooldown)");
+            tracing::info!(old = %old, new = %ip, "public IP changed but rebalanced recently - skipping (cooldown)");
         } else {
-            tracing::info!(old = %old, new = %ip, "public IP changed — enqueueing locality rebalance");
+            tracing::info!(old = %old, new = %ip, "public IP changed - enqueueing locality rebalance");
             crate::jobs::enqueue(&st.db, "rebalance_locality", json!({ "reason": "ip_changed" })).await;
         }
     }
@@ -855,7 +855,7 @@ mod tests {
     #[test]
     fn a_peer_off_for_the_night_does_not_trigger_re_replication() {
         // 12 live + 2 on a host that is silent but not `down`: margin 2, nothing
-        // to do — this is the nightly-shutdown case the grace rule exists for.
+        // to do - this is the nightly-shutdown case the grace rule exists for.
         let p = plan_chunk(&states(12, 2, 0));
         assert_eq!(p.live, 12);
         assert_eq!(p.deferred, 2);

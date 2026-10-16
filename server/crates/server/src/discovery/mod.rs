@@ -2,12 +2,12 @@
 //! The transports (mDNS on the LAN, the Kademlia DHT for wide-area) all funnel
 //! through [`register_peer`], which handshakes the address and upserts it.
 //!
-//! Trust model — trust on first use (TOFU). A `peer_id` is public: it travels in
+//! Trust model - trust on first use (TOFU). A `peer_id` is public: it travels in
 //! mDNS announcements and in the DHT, so announcing someone else's is free. What
 //! is not free is signing a fresh challenge with the key behind it. The first
 //! time we successfully challenge a peer we PIN its public key
 //! (`p2pnas.peers.public_key`); from then on, any handshake for that `peer_id`
-//! presenting a different key — or no key at all — is refused and writes nothing.
+//! presenting a different key - or no key at all - is refused and writes nothing.
 //! That is what closes the address-hijack: an attacker announcing a victim's
 //! `peer_id` can no longer repoint its `addr` at itself and collect every shard
 //! operation meant for it.
@@ -48,7 +48,7 @@ pub async fn register_peer(db: &DbPool, identity: &NodeIdentity, my_api_port: u1
             tracing::warn!(addr, peer_id = %peer.peer_id, "discovery: refusing a peer that cannot prove its identity (strict peer auth)");
             return None;
         }
-        // Permissive mode: accepted, but only for a peer_id we have NOT pinned —
+        // Permissive mode: accepted, but only for a peer_id we have NOT pinned -
         // the SQL below refuses to move the address of an already-pinned peer.
         tracing::warn!(addr, peer_id = %peer.peer_id, "discovery: peer answered the legacy handshake; its identity is declared, not proven");
     }
@@ -61,11 +61,11 @@ pub async fn register_peer(db: &DbPool, identity: &NodeIdentity, my_api_port: u1
     // The hijack guard, applied here in Rust because the conditional upsert it
     // replaces (`ON CONFLICT ... WHERE peers.public_key IS NOT DISTINCT FROM
     // EXCLUDED.public_key`) is PostgreSQL-only. The read-modify-write runs in one
-    // transaction — row-locked on PostgreSQL/MySQL, single-writer on SQLite — so
+    // transaction - row-locked on PostgreSQL/MySQL, single-writer on SQLite - so
     // the pin decision cannot race a concurrent handshake for the same peer_id.
     //
     // An update only happens if we have no key pinned yet, or if the key just
-    // proven is exactly the pinned one. Anything else leaves the row untouched —
+    // proven is exactly the pinned one. Anything else leaves the row untouched -
     // in particular an attacker announcing a known peer_id from its own address,
     // and a legacy handshake for a peer whose key we already pinned (a downgrade
     // path to the same hijack). `public_key`/`zone` use COALESCE so a later
@@ -77,7 +77,7 @@ pub async fn register_peer(db: &DbPool, identity: &NodeIdentity, my_api_port: u1
                 addr,
                 peer_id = %peer.peer_id,
                 proven = peer.public_key.is_some(),
-                "discovery: refusing peer update — the presented public key is missing or differs from the pinned one"
+                "discovery: refusing peer update - the presented public key is missing or differs from the pinned one"
             );
             None
         }

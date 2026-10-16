@@ -2,23 +2,23 @@
 //!
 //! Design goals (perf without weakening security):
 //!   * AES-256-GCM via **aws-lc-rs** (assembly AES-NI / VAES, constant-time).
-//!   * **In-place** sealing/opening — no per-chunk allocation or copy.
+//!   * **In-place** sealing/opening - no per-chunk allocation or copy.
 //!   * A fresh **per-file subkey** derived by HKDF-SHA256(data_key, file_id). Each
 //!     subkey therefore only ever protects the chunks of a single file, so the
 //!     number of (key, random-nonce) pairs stays far below GCM's birthday bound
-//!     (~2^32) — we keep GCM's speed without GCM-SIV's overhead.
+//!     (~2^32) - we keep GCM's speed without GCM-SIV's overhead.
 //!   * **Deterministic counter nonce** = chunk index, under the per-file subkey.
 //!     Because each file (version) gets its own subkey and chunk indices are unique
-//!     within a file, no (subkey, nonce) pair ever repeats — so we get GCM's full
+//!     within a file, no (subkey, nonce) pair ever repeats - so we get GCM's full
 //!     speed with no RNG on the hot path (no lock contention across threads) AND no
 //!     birthday bound. Invariant the caller MUST keep: never re-encrypt different
-//!     content at the same (file_id, chunk index) — rotate `file_id` per version.
+//!     content at the same (file_id, chunk index) - rotate `file_id` per version.
 //!
 //! Two schemes coexist, selected per file by [`KeyScheme`] (persisted in the
 //! manifest, defaulting to v1 for rows written before it existed):
-//!   * **v1** — what every already-stored file uses: subkey = HKDF(data_key,
+//!   * **v1** - what every already-stored file uses: subkey = HKDF(data_key,
 //!     file_id), empty AAD. Read-only from now on; its bytes must never move.
-//!   * **v2** — used for new writes: the subkey is bound to `(user_id, file_id)`
+//!   * **v2** - used for new writes: the subkey is bound to `(user_id, file_id)`
 //!     with explicit, length-prefixed domain separation, and each chunk's GCM tag
 //!     authenticates a canonical AAD over (scheme, user, file, chunk_count,
 //!     chunk_index). Decrypting therefore requires knowing the owner, and a chunk
@@ -40,7 +40,7 @@ pub use aws_lc_rs::aead::NONCE_LEN as NONCE_BYTES;
 // manifest key) get the same wiping primitives without each declaring `zeroize`.
 pub use zeroize::{Zeroize, Zeroizing};
 
-/// HKDF info string — versioned so the derivation scheme can evolve safely.
+/// HKDF info string - versioned so the derivation scheme can evolve safely.
 const SUBKEY_INFO: &[u8] = b"p2pnas/file-subkey/v1";
 
 /// HKDF salt of every **v2** derivation. Distinct from [`SUBKEY_INFO`] so that a
@@ -103,7 +103,7 @@ pub enum KeyScheme {
     /// Legacy scheme: subkey = HKDF(data_key, file_id), empty AAD.
     ///
     /// The owner is not bound into the key material, so any caller holding the
-    /// node key and a file id can decrypt — isolation between users rests
+    /// node key and a file id can decrypt - isolation between users rests
     /// entirely on the manifest's `WHERE user_id = ?`. Kept forever so already
     /// stored data stays readable; never used for new writes.
     #[default]
@@ -114,7 +114,7 @@ pub enum KeyScheme {
     ///
     /// Consequences: a file id alone no longer decrypts anything (the owner is
     /// needed), a chunk cannot be replayed into another file, at another index,
-    /// or under a different chunk count — so truncation is detected.
+    /// or under a different chunk count - so truncation is detected.
     V2,
 }
 
@@ -172,15 +172,15 @@ impl DataKey {
     /// Derive a raw 32-byte subkey: HKDF-SHA256(self, info). Used for the per-file
     /// content subkey and for non-AEAD secrets (manifest SQLCipher key, peer id).
     ///
-    /// INVARIANT (domain separation): the three uses share one HKDF namespace —
+    /// INVARIANT (domain separation): the three uses share one HKDF namespace -
     /// `info` is either a caller-supplied file id or one of the fixed strings
     /// `p2pnas/manifest/v1` / `p2pnas/peer-id/v1`. Nothing here stops a file id
     /// from *being* one of those strings, which would hand the caller the manifest
     /// SQLCipher key. What neutralises it today is that every file id reaching
     /// `file_subkey` is a 32-character hex string minted by the store (never user
     /// text), so it can never collide with a fixed label. Keep it that way: a file
-    /// id must stay machine-generated and hex. The structural fix — prefixing each
-    /// use with a length-delimited domain tag — is deliberately NOT applied here
+    /// id must stay machine-generated and hex. The structural fix - prefixing each
+    /// use with a length-delimited domain tag - is deliberately NOT applied here
     /// because it would change every derived byte and make already-stored data
     /// unreadable; it lives in [`DataKey::derive_v2`] instead, which new files use
     /// via [`KeyScheme::V2`]. This function stays frozen for the legacy path (and
@@ -252,7 +252,7 @@ impl DataKey {
         Ok(FileSubkey(*self.derive_v2(FILE_SUBKEY_DOMAIN_V2, &[user_id, file_id])?))
     }
 
-    /// Derive the content subkey for `scheme` — the single entry point callers
+    /// Derive the content subkey for `scheme` - the single entry point callers
     /// should use once a file's scheme is read from the manifest. `user_id` is
     /// ignored under [`KeyScheme::V1`] (which predates owner binding).
     pub fn file_subkey_for(
@@ -302,12 +302,12 @@ impl ChunkSealer {
     /// Encrypt chunk `index` in place: the 16-byte tag is appended to `buf`.
     /// Returns the (deterministic) nonce for storage/clarity.
     ///
-    /// INVARIANT (nonce uniqueness) — GCM breaks catastrophically on a repeated
+    /// INVARIANT (nonce uniqueness) - GCM breaks catastrophically on a repeated
     /// (key, nonce): forging becomes possible and both plaintexts leak via their
     /// XOR. The nonce here is `index` alone, so the caller owns the whole
     /// guarantee and MUST satisfy both halves:
     ///   1. within one sealer (i.e. one `file_id`), never seal two different
-    ///      plaintexts at the same `index` — indices come from the chunk position
+    ///      plaintexts at the same `index` - indices come from the chunk position
     ///      in a single pass over one file version, never from client input;
     ///   2. across versions, mint a fresh `file_id` for every re-upload, so
     ///      rewriting chunk 0 happens under a different subkey.
@@ -315,7 +315,7 @@ impl ChunkSealer {
     /// Re-sealing a *byte-identical* chunk at the same index is harmless (it
     /// reproduces the same ciphertext), which is what makes deduplication safe.
     /// The bound check below only enforces the counter's range; it cannot detect a
-    /// violation of (1) or (2) — an internal counter would, but that is a caller-
+    /// violation of (1) or (2) - an internal counter would, but that is a caller-
     /// visible API change left for a follow-up.
     pub fn seal(&self, buf: &mut Vec<u8>, index: u64) -> Result<[u8; NONCE_LEN], CoreError> {
         // `Aad::empty()` is kept literally on this path: it is what every already
@@ -369,7 +369,7 @@ impl ChunkSealer {
 
     /// Decrypt chunk `index` requiring `aad` to match the one used at seal time.
     /// Any mismatch (wrong file, wrong owner, wrong index, wrong chunk count)
-    /// fails the tag check and returns an error — never partial plaintext.
+    /// fails the tag check and returns an error - never partial plaintext.
     pub fn open_with_aad<'a>(
         &self,
         index: u64,
@@ -384,7 +384,7 @@ impl ChunkSealer {
 
 /// The metadata bound into a v2 chunk's GCM tag.
 ///
-/// Canonical encoding — every component is prefixed by its length as a
+/// Canonical encoding - every component is prefixed by its length as a
 /// big-endian `u64` (written `lp(x)` below), so no two different tuples can
 /// produce the same byte string:
 ///
@@ -421,7 +421,7 @@ impl ChunkAad<'_> {
 }
 
 /// Everything needed to seal/open the chunks of **one file** under **one
-/// scheme** — the type call sites should hold instead of a bare [`ChunkSealer`].
+/// scheme** - the type call sites should hold instead of a bare [`ChunkSealer`].
 ///
 /// It owns the subkey's AES schedule (computed once, shared read-only across
 /// rayon workers) and, for v2, the constant part of the per-chunk AAD, so the
@@ -440,7 +440,7 @@ pub struct FileCipher {
 impl FileCipher {
     /// Build the cipher for one file. `chunk_count` is the file's total number of
     /// chunks; it is bound into every v2 tag and ignored under v1 (pass the real
-    /// count anyway — it costs nothing and keeps call sites uniform).
+    /// count anyway - it costs nothing and keeps call sites uniform).
     pub fn new(
         key: &DataKey,
         scheme: KeyScheme,
@@ -475,7 +475,7 @@ impl FileCipher {
         &self.sealer
     }
 
-    /// The AAD for chunk `index` — empty under v1, [`ChunkAad::encode`] under v2.
+    /// The AAD for chunk `index` - empty under v1, [`ChunkAad::encode`] under v2.
     pub fn aad_for(&self, index: u64) -> Vec<u8> {
         match self.scheme {
             KeyScheme::V1 => Vec::new(),
@@ -585,7 +585,7 @@ mod tests {
 
     /// The v2 derivation must stay exactly HKDF-SHA256(salt = HKDF_SALT_V2,
     /// ikm = key, info = lp(domain) ‖ lp(user) ‖ lp(file)). The reference input is
-    /// rebuilt here by hand — deliberately *not* through `push_lp`/`lp_concat` —
+    /// rebuilt here by hand - deliberately *not* through `push_lp`/`lp_concat` -
     /// so that changing the encoding helpers breaks this test instead of silently
     /// orphaning every v2 file.
     #[test]
@@ -610,8 +610,8 @@ mod tests {
     }
 
     /// Length prefixing is the whole point: no two different component tuples may
-    /// encode to the same HKDF input. Without it, ("ab","c") and ("a","bc") — and
-    /// a file id that literally spells another use's label — would collide.
+    /// encode to the same HKDF input. Without it, ("ab","c") and ("a","bc") - and
+    /// a file id that literally spells another use's label - would collide.
     #[test]
     fn v2_components_cannot_be_confused() {
         let key = fixed_key();
@@ -632,7 +632,7 @@ mod tests {
     }
 
     /// The precomputed prefix in `FileCipher` must agree with the standalone
-    /// `ChunkAad` encoding — otherwise sealing and opening would drift apart.
+    /// `ChunkAad` encoding - otherwise sealing and opening would drift apart.
     #[test]
     fn file_cipher_aad_matches_the_canonical_encoding() {
         let key = DataKey::random();
@@ -667,7 +667,7 @@ mod tests {
         cipher.seal_chunk(&mut via_cipher, 5).unwrap();
         assert_eq!(legacy, via_cipher);
 
-        // And a v1 file still opens with a different (or absent) user identity —
+        // And a v1 file still opens with a different (or absent) user identity -
         // v1 never bound the owner, and we must not pretend otherwise.
         let other = FileCipher::new(&key, KeyScheme::V1, b"user-b", b"file-1", 9).unwrap();
         assert_eq!(other.open_chunk(5, &mut via_cipher).unwrap(), &plain[..]);

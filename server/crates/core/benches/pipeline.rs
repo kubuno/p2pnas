@@ -1,4 +1,4 @@
-//! P0 benchmark — proves the diagnosis: the bottleneck is *around* the cipher,
+//! P0 benchmark - proves the diagnosis: the bottleneck is *around* the cipher,
 //! not the cipher. Compares, on 4 MiB / 64 MiB buffers:
 //!   1. AEAD primitive: aws-lc-rs (in-place) vs RustCrypto aes-gcm (allocating).
 //!   2. Compression policy: blind zstd-3 (ptopnas) vs entropy-gated.
@@ -21,7 +21,7 @@ use p2pnas_core::{
 };
 
 /// New pipeline run SEQUENTIALLY (entropy-gate + aws-lc in-place + RS), no rayon,
-/// no upfront split copy — isolates "is parallelism the regression?".
+/// no upfront split copy - isolates "is parallelism the regression?".
 fn new_seq(data: &[u8], key: &DataKey, cfg: PipelineConfig) {
     let sealer = key.file_subkey(b"f").unwrap().sealer().unwrap();
     for (i, chunk) in data.chunks(cfg.chunk_size).enumerate() {
@@ -31,7 +31,7 @@ fn new_seq(data: &[u8], key: &DataKey, cfg: PipelineConfig) {
     }
 }
 
-/// Sequential, but WITHOUT erasure — isolates the cost of the RS striping copies.
+/// Sequential, but WITHOUT erasure - isolates the cost of the RS striping copies.
 fn new_seq_no_rs(data: &[u8], key: &DataKey, cfg: PipelineConfig) {
     let sealer = key.file_subkey(b"f").unwrap().sealer().unwrap();
     for (i, chunk) in data.chunks(cfg.chunk_size).enumerate() {
@@ -43,12 +43,12 @@ fn new_seq_no_rs(data: &[u8], key: &DataKey, cfg: PipelineConfig) {
 
 const MIB: usize = 1024 * 1024;
 
-/// Pseudo-random (incompressible) bytes — models already-compressed media.
+/// Pseudo-random (incompressible) bytes - models already-compressed media.
 fn incompressible(n: usize) -> Vec<u8> {
     (0..n as u64).map(|i| (i.wrapping_mul(6364136223846793005) >> 33) as u8).collect()
 }
 
-/// Highly compressible bytes — models logs / text / sparse data.
+/// Highly compressible bytes - models logs / text / sparse data.
 fn compressible(n: usize) -> Vec<u8> {
     let pattern = b"the quick brown fox jumps over the lazy dog 0123456789\n";
     (0..n).map(|i| pattern[i % pattern.len()]).collect()

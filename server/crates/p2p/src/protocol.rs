@@ -39,7 +39,7 @@ pub enum P2pMessage {
     /// Ask the remote to host `data` (a shard owned by `owner_peer_id`).
     // `shard_index` lets the host know whether this is a data or a parity shard,
     // so it can shed parity first when reclaiming space from an absent owner.
-    // (Adding a field renumbers no variant — bincode keys variants by order — so
+    // (Adding a field renumbers no variant - bincode keys variants by order - so
     // this stays wire-compatible with peers as long as they are on the same build.)
     StoreShard { fragment_id: String, owner_peer_id: String, shard_index: i32, data: Vec<u8> },
     Ack { fragment_id: String },
@@ -49,7 +49,7 @@ pub enum P2pMessage {
     ShardData { fragment_id: String, data: Vec<u8> },
     ShardNotFound { fragment_id: String },
 
-    /// Cheap existence probe (no payload transfer) — used by the scrubber/repair
+    /// Cheap existence probe (no payload transfer) - used by the scrubber/repair
     /// pass to check a shard is still held without pulling its bytes.
     HasShard { fragment_id: String },
     HasShardResult { fragment_id: String, present: bool },
@@ -70,7 +70,7 @@ pub enum P2pMessage {
     // These variants are APPENDED after every pre-existing one on purpose:
     // bincode encodes an enum as its positional index, so appending leaves the
     // wire meaning of `Ping`..`Error` untouched. A peer running an older build
-    // cannot decode them — it errors out and closes the connection — which the
+    // cannot decode them - it errors out and closes the connection - which the
     // client turns into a fallback to the legacy `Ping`, never into a crash.
     /// Authenticated liveness + identity handshake. `nonce` is a fresh random
     /// challenge (exactly [`NONCE_LEN`] bytes) that the responder must sign to
@@ -78,7 +78,7 @@ pub enum P2pMessage {
     AuthPing { peer_id: String, api_port: u16, nonce: Vec<u8> },
     /// Answer to an `AuthPing`. `signature` covers [`pong_transcript`], which
     /// binds the announced `peer_id`, the api port, the caller's challenge and
-    /// the address the responder saw — so the proof cannot be replayed towards
+    /// the address the responder saw - so the proof cannot be replayed towards
     /// another node, for another identity, or from another address.
     ///
     /// `challenge` is the responder's own fresh nonce, letting the SAME
@@ -190,7 +190,7 @@ pub fn random_nonce() -> Result<[u8; NONCE_LEN], AuthError> {
 ///
 /// Everything the caller will act upon is inside the signature: the identity
 /// (`peer_id`), where to reach it (`api_port`), the challenge that makes the
-/// proof fresh, and the address the responder observed — so a signature captured
+/// proof fresh, and the address the responder observed - so a signature captured
 /// on one link cannot be replayed by a relay sitting on another.
 pub fn pong_transcript(peer_id: &str, api_port: u16, nonce: &[u8], observed_addr: Option<&str>) -> Vec<u8> {
     transcript(
@@ -209,7 +209,7 @@ pub fn proof_transcript(verifier_peer_id: &str, claimed_peer_id: &str, challenge
 }
 
 /// Verify a hex signature over `message` with a hex Ed25519 public key.
-/// Returns false — never an error — on any malformed input, so no call site can
+/// Returns false - never an error - on any malformed input, so no call site can
 /// accidentally treat "could not parse" as "verified".
 pub fn verify_signature(public_key_hex: &str, message: &[u8], signature_hex: &str) -> bool {
     let (Some(key), Some(sig)) = (from_hex(public_key_hex), from_hex(signature_hex)) else {
@@ -225,7 +225,7 @@ pub fn verify_signature(public_key_hex: &str, message: &[u8], signature_hex: &st
 ///
 /// One instance lives for the lifetime of a connection: the challenge it mints is
 /// consumed by the first `AuthProof` attempt (pass or fail), so a captured proof
-/// can never be replayed — not on a later connection (fresh random challenge) nor
+/// can never be replayed - not on a later connection (fresh random challenge) nor
 /// on the same one (the challenge is gone).
 #[derive(Default)]
 pub struct PeerAuthSession {
@@ -259,7 +259,7 @@ impl PeerAuthSession {
         signature_hex: &str,
     ) -> bool {
         let Some(challenge) = self.challenge.take() else {
-            return false; // no challenge outstanding — nothing to answer
+            return false; // no challenge outstanding - nothing to answer
         };
         let message = proof_transcript(local_peer_id, peer_id, &challenge);
         if !verify_signature(public_key_hex, &message, signature_hex) {
@@ -295,7 +295,7 @@ fn transcript(context: &[u8], parts: &[&[u8]]) -> Vec<u8> {
     out
 }
 
-/// Lowercase hex — the on-the-wire form of keys and signatures.
+/// Lowercase hex - the on-the-wire form of keys and signatures.
 fn to_hex(bytes: &[u8]) -> String {
     hex::encode(bytes)
 }
@@ -306,7 +306,7 @@ fn from_hex(s: &str) -> Option<Vec<u8>> {
     hex::decode(s).ok()
 }
 
-/// Canonical shard content hash (hex of the first 16 bytes of blake3) — matches
+/// Canonical shard content hash (hex of the first 16 bytes of blake3) - matches
 /// `p2pnas_store::shard_hash` so an audit reply can be compared to the manifest.
 pub fn content_hash(bytes: &[u8]) -> String {
     let digest = blake3::hash(bytes);

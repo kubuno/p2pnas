@@ -22,7 +22,7 @@ pub struct AppState {
 
 impl AppState {
     /// A snapshot of the current instance settings. Falls back to the compiled
-    /// defaults if the lock was poisoned by a panicking writer — a lost value
+    /// defaults if the lock was poisoned by a panicking writer - a lost value
     /// must never change a default silently.
     pub fn instance(&self) -> InstanceConfig {
         self.instance.read().map(|c| c.clone()).unwrap_or_default()

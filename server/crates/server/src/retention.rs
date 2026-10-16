@@ -1,9 +1,9 @@
-//! Retention / reciprocity sweep — host side.
+//! Retention / reciprocity sweep - host side.
 //!
 //! This node hosts shards for other peers (`hosted_shards`). When an owner stops
 //! coming online it stops contributing to everyone else's durability, so we
 //! gradually reclaim the space its data uses here. But generously, reversibly,
-//! and in proportion to how much it contributed — because a node being offline is
+//! and in proportion to how much it contributed - because a node being offline is
 //! not proof of bad faith (it may be down for reasons beyond its control).
 //!
 //! Absence is `now − peers.last_seen`. The instance thresholds (grace / reclaim /
@@ -13,18 +13,18 @@
 //! we do for you what you do for us, with a margin.
 //!
 //! On top of that, `peers.threshold_days` is this host's OWN generosity toward a
-//! given peer — extra days it chooses to grant, independently of the instance
+//! given peer - extra days it chooses to grant, independently of the instance
 //! policy. The instance sets the floor the network needs to stay healthy; each
 //! host decides what more it is willing to offer to a peer it knows.
 //!
-//! Stages — each host acts LOCALLY on its own hosted shards. There is
+//! Stages - each host acts LOCALLY on its own hosted shards. There is
 //! deliberately no "delete X's data" network message: that would be a mass
 //! destruction primitive, especially while peers are not yet cryptographically
 //! authenticated.
 //!   present / grace  → nothing is removed.
 //!   reclaim          → shed the PARITY shards we host (index ≥ data count). The
 //!                      data shards alone still reconstruct the file, so the owner
-//!                      loses nothing and can be made whole on return — this is
+//!                      loses nothing and can be made whole on return - this is
 //!                      the reversible margin.
 //!   evict            → remove everything we host for that owner.
 //!
@@ -53,8 +53,8 @@ pub async fn sweep(st: &AppState) {
         .collect();
 
     for owner in owners {
-        // Absence reference: the owner's last liveness, or — if we never recorded
-        // one — when we last received data from it. Reliability credits only a
+        // Absence reference: the owner's last liveness, or - if we never recorded
+        // one - when we last received data from it. Reliability credits only a
         // known peer; an owner no longer in `peers` gets none.
         let row: Option<(Option<DateTime<Utc>>, f64, i32)> = st
             .db
@@ -81,7 +81,7 @@ pub async fn sweep(st: &AppState) {
         // `peers.threshold_days` is this node's OWN generosity toward that peer:
         // extra days granted on top of the instance policy, settable per peer. The
         // instance sets the network's backbone, each host decides what more it is
-        // willing to offer — which is the whole reciprocity idea. Negative values
+        // willing to offer - which is the whole reciprocity idea. Negative values
         // are ignored: generosity can only ever add time, never take it away.
         let generosity = generosity_days.max(0) as f64;
         let reclaim_at = inst.retention_reclaim_days as f64 * factor + generosity;
@@ -118,8 +118,8 @@ async fn fallback_reference(st: &AppState, owner: &str) -> DateTime<Utc> {
     latest.flatten().unwrap_or_else(Utc::now)
 }
 
-/// Remove hosted shards for `owner` — parity only (`parity_only`) or all of them
-/// — from both the shard store and the bookkeeping, and give the freed bytes back
+/// Remove hosted shards for `owner` - parity only (`parity_only`) or all of them
+/// - from both the shard store and the bookkeeping, and give the freed bytes back
 /// to the contribution budget. Returns (count removed, bytes freed).
 async fn reclaim(st: &AppState, owner: &str, parity_only: bool) -> (usize, i64) {
     let rows: Vec<(String, i64)> = if parity_only {

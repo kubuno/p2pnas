@@ -23,10 +23,10 @@ lto = "fat"
 codegen-units = 1
 
 [workspace.dependencies]
-# Content encryption — AWS-LC (BoringSSL fork) with assembly AES-256-GCM
+# Content encryption - AWS-LC (BoringSSL fork) with assembly AES-256-GCM
 # (AES-NI + VAES). Constant-time, FIPS-validatable.
 aws-lc-rs = "1"
-# Erasure coding — SIMD Reed-Solomon (replaces ptopnas's software reed-solomon-erasure).
+# Erasure coding - SIMD Reed-Solomon (replaces ptopnas's software reed-solomon-erasure).
 reed-solomon-simd = "3"
 # Compression (fast levels only; gated by an entropy probe).
 zstd = "0.13"

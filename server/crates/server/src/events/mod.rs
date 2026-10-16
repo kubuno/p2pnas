@@ -2,7 +2,7 @@
 //!
 //! `module.toml` has declared a subscription to `UserDeleted` since the module
 //! existed, and the promise was never kept: there was no route to deliver it to,
-//! so a removed account kept its `p2pnas.user_quota` row — and with it a slice of
+//! so a removed account kept its `p2pnas.user_quota` row - and with it a slice of
 //! the node's contributed capacity that `handlers::admin::set_quota` still
 //! counted as allocated, forever. Deleting enough accounts would eventually make
 //! the node refuse to allocate anything to anyone.
@@ -34,7 +34,7 @@ pub async fn handle(event: P2pnasEvent, st: &AppState) {
 /// local shards behind them), the node-level accounting they weighed on, and its
 /// quota row.
 ///
-/// Shards this node had pushed onto PEERS are not reclaimed here — a peer's store
+/// Shards this node had pushed onto PEERS are not reclaimed here - a peer's store
 /// is not ours to command, and the existing delete path has the same limit; they
 /// become unreferenced fragments that the peer's own housekeeping collects.
 ///

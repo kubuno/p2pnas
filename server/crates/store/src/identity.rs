@@ -63,7 +63,7 @@ impl NodeIdentity {
 
 /// Create the identity directory with `0700` and tighten it if it already exists:
 /// `create_dir_all` alone applies the process umask, which on most distributions
-/// leaves `0755` — world-traversable, so any local user can stat the key file and
+/// leaves `0755` - world-traversable, so any local user can stat the key file and
 /// watch it appear.
 #[cfg(unix)]
 fn create_dir_protected(dir: &Path) -> Result<()> {
@@ -88,7 +88,7 @@ fn check_key_perms(path: &Path) -> Result<()> {
     let mode = std::fs::metadata(path)?.permissions().mode() & 0o7777;
     if mode & 0o077 != 0 {
         return Err(StoreError::Integrity(format!(
-            "{} is accessible beyond its owner (mode {:04o}); refusing to start — \
+            "{} is accessible beyond its owner (mode {:04o}); refusing to start - \
              fix it with `chmod 600 {}` and rotate the node key if it may have leaked",
             path.display(),
             mode,
@@ -114,7 +114,7 @@ fn write_protected(path: &Path, bytes: &[u8]) -> Result<()> {
         .open(path)?;
     f.write_all(bytes)?;
     // Without this, a crash between write and writeback can leave a zero-length
-    // or truncated key file — and a lost node key means every file and the whole
+    // or truncated key file - and a lost node key means every file and the whole
     // manifest are permanently unreadable. Durability here is not optional.
     f.sync_all()?;
     Ok(())

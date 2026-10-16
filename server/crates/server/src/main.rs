@@ -52,7 +52,7 @@ struct SettingGroupRaw {
 /// described HERE and nowhere in the console's code.
 ///
 /// Presentation metadata (`min`/`max`, `unit`, `multiline`, `advanced`, `risk`)
-/// is optional and only serialised when the manifest sets it — an omitted field
+/// is optional and only serialised when the manifest sets it - an omitted field
 /// must not reach the core as `null` and overwrite a sane default.
 #[derive(Deserialize, Serialize)]
 struct SettingDefRaw {
@@ -159,7 +159,7 @@ async fn main() -> Result<()> {
     // Database pool. The engine (PostgreSQL / MySQL / SQLite) is the
     // administrator's choice in `[database] engine`, read at run time; `connect`
     // also creates the module's namespace (PostgreSQL schema, MySQL database, or
-    // the ATTACHed SQLite file). Only the control plane lives here — the local
+    // the ATTACHed SQLite file). Only the control plane lives here - the local
     // SQLCipher manifest is opened separately below and is untouched.
     let pool = kubuno_db::connect(&settings.database, SCHEMA)
         .await
@@ -268,11 +268,11 @@ async fn main() -> Result<()> {
                 {
                     Ok(r) if r.status().is_success() => {}
                     Ok(r) if r.status() == reqwest::StatusCode::NOT_FOUND => {
-                        tracing::info!("Heartbeat 404 — ré-enregistrement…");
+                        tracing::info!("Heartbeat 404 - ré-enregistrement…");
                         register_with_core(&http2, &settings2).await;
                     }
                     Ok(r) if r.status() == reqwest::StatusCode::FORBIDDEN => {
-                        tracing::info!("Heartbeat 403 — module désactivé, attente…");
+                        tracing::info!("Heartbeat 403 - module désactivé, attente…");
                     }
                     Ok(r) => tracing::warn!(status = %r.status(), "Heartbeat réponse inattendue"),
                     Err(e) => tracing::warn!(error = %e, "Heartbeat erreur réseau"),
@@ -287,7 +287,7 @@ async fn main() -> Result<()> {
         .with_context(|| format!("Bind sur {addr}"))?;
     tracing::info!("Kubuno p2pnas démarré sur http://{addr}");
 
-    // Record the node's stable peer id in the control plane — in the background, so
+    // Record the node's stable peer id in the control plane - in the background, so
     // it never delays binding the port (avoids restart/bind races at startup).
     {
         let pool = state.db.clone();
@@ -321,7 +321,7 @@ async fn main() -> Result<()> {
                 });
                 tokio::spawn(p2pnas_p2p::serve(p2p_listener, handler));
             }
-            Err(e) => tracing::error!(error = %e, addr = %p2p_addr, "bind P2P échoué — pair en mode dégradé"),
+            Err(e) => tracing::error!(error = %e, addr = %p2p_addr, "bind P2P échoué - pair en mode dégradé"),
         }
     }
 
@@ -361,7 +361,7 @@ async fn main() -> Result<()> {
     // The delay is re-read at every iteration rather than baked into a fixed
     // `interval`: shortening it in the console must speed the next pass up, not
     // the one after a restart. A change therefore applies from the pass that
-    // follows the edit — the sleep already under way is not interrupted.
+    // follows the edit - the sleep already under way is not interrupted.
     {
         let st = state.clone();
         tokio::spawn(async move {
@@ -373,8 +373,8 @@ async fn main() -> Result<()> {
     }
 
     // Retention / reciprocity sweep: reclaim space from long-absent owners, in
-    // graduated and reversible stages (see `retention`). Once a day is ample —
-    // the thresholds are in days — and it runs off the same worker queue.
+    // graduated and reversible stages (see `retention`). Once a day is ample -
+    // the thresholds are in days - and it runs off the same worker queue.
     {
         let st = state.clone();
         tokio::spawn(async move {
@@ -388,7 +388,7 @@ async fn main() -> Result<()> {
 
     // Small-file packing + container compaction, every 6 hours. Repack first
     // (regroup new tiny files), then compact (reclaim containers the retention
-    // sweep has hollowed out) — jobs coalesce, so this never piles up.
+    // sweep has hollowed out) - jobs coalesce, so this never piles up.
     {
         let st = state.clone();
         tokio::spawn(async move {
@@ -403,7 +403,7 @@ async fn main() -> Result<()> {
     }
 
     // Distributed manifest backup: once a day. The version IS a day number, so a
-    // second pass on the same day is a no-op — and enqueuing BEFORE the sleep means
+    // second pass on the same day is a no-op - and enqueuing BEFORE the sleep means
     // a node restarted every day still gets backed up.
     {
         let st = state.clone();

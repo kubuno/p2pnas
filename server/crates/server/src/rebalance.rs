@@ -1,10 +1,10 @@
 //! Locality rebalance: re-home shards toward the latency-optimal layout.
 //!
 //! Repair fixes *lost* shards; this pass *moves* healthy ones. After the node's
-//! latency picture changes (a peer got slower, or the node itself moved — see the
+//! latency picture changes (a peer got slower, or the node itself moved - see the
 //! `ip_changed` trigger), the current placement may no longer be the nearest. For
 //! every file we recompute the ideal latency-aware layout and move each shard
-//! that sits somewhere other than where it should — fetch from its current home,
+//! that sits somewhere other than where it should - fetch from its current home,
 //! store at the target, update the manifest, then drop the old copy.
 //!
 //! Conservative: a shard is only moved once its new copy is confirmed stored
@@ -59,7 +59,7 @@ pub async fn rebalance_all(st: &AppState) -> RebalanceReport {
     //
     // This MUST use the same zone-aware rule as the initial placement. With the
     // latency-only plan, every rebalance pass would pull shards back onto the
-    // nearest neighbours — undoing the failure-domain spread it had just been
+    // nearest neighbours - undoing the failure-domain spread it had just been
     // given, and moving data across the network forever to do it.
     let peer_candidates: Vec<placement::PeerCandidate> = live
         .iter()
@@ -78,7 +78,7 @@ pub async fn rebalance_all(st: &AppState) -> RebalanceReport {
     };
 
     // Target shard COUNT per location (which specific shard sits where doesn't
-    // matter — any shard reconstructs). Count-based moves only touch the delta, so
+    // matter - any shard reconstructs). Count-based moves only touch the delta, so
     // a placement that already matches the target distribution is left untouched
     // (built-in hysteresis: no churn when the optimum is unchanged).
     let mut target: HashMap<String, usize> = HashMap::new();
@@ -153,7 +153,7 @@ pub async fn rebalance_all(st: &AppState) -> RebalanceReport {
 }
 
 /// Move one shard from its current home to `dest` ("local" or a peer_id):
-/// fetch (verified) → place → manifest → drop old. Safe ordering — a crash mid-way
+/// fetch (verified) → place → manifest → drop old. Safe ordering - a crash mid-way
 /// leaves either the old or both copies, never zero. Returns true on success.
 async fn move_shard(
     st: &AppState,

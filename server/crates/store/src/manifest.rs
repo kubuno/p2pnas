@@ -1,4 +1,4 @@
-//! Encrypted manifest (SQLCipher) — the source of truth for the file/chunk/shard
+//! Encrypted manifest (SQLCipher) - the source of truth for the file/chunk/shard
 //! index. Namespaced per user (decision 2A: logical isolation). Opened on demand;
 //! callers run operations inside a single connection (and a transaction for push).
 
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS files (
     superseded_at TEXT,
     -- Every version of the same logical file shares a lineage id (the file_id of
     -- the first version stored at that path). NULL on rows written before
-    -- versioning existed — read everywhere as COALESCE(lineage, file_id).
+    -- versioning existed - read everywhere as COALESCE(lineage, file_id).
     lineage       TEXT,
     -- Which key-derivation / authentication scheme this file was written with
     -- (see `p2pnas_core::crypto::KeyScheme`). The read path MUST reproduce the
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS files (
     -- cap). NULL on rows written before this column: they simply never match.
     content_hash  TEXT,
     -- Small-file packing (see `service::pack_files`). A "member" row's bytes live
-    -- inside a container ("pack") that is itself an ordinary `files` row — one
+    -- inside a container ("pack") that is itself an ordinary `files` row - one
     -- whose `path` is a hidden `PACK_PATH_PREFIX` key, exactly like retired rows
     -- park theirs on a tombstone. Reusing `files` (rather than a new table) keeps
     -- the `chunks → files` cascade, purge, repair, placement and remote GC working
@@ -108,9 +108,9 @@ CREATE INDEX IF NOT EXISTS files_pack_idx ON files(pack_id) WHERE pack_id IS NOT
 
 /// Prefix of the tombstone key a retired row's `path` is rewritten to.
 ///
-/// It exists only to keep `UNIQUE (user_id, path)` — baked into the table since
+/// It exists only to keep `UNIQUE (user_id, path)` - baked into the table since
 /// the first release, and not relaxable without rebuilding a table other tables
-/// hold foreign keys into — from treating a trashed file or an old version as
+/// hold foreign keys into - from treating a trashed file or an old version as
 /// still occupying its path. U+0001 is a control character no real path carries,
 /// and the file_id appended to it is the table's primary key, so the rewritten
 /// value is unique by construction and can never collide with a live path.
@@ -125,7 +125,7 @@ fn retired_key(file_id: &str) -> String {
 
 /// Prefix of the hidden key a pack container row uses as its `path`.
 ///
-/// Same construction — and same rationale — as [`RETIRED_PATH_PREFIX`]: U+0001
+/// Same construction - and same rationale - as [`RETIRED_PATH_PREFIX`]: U+0001
 /// never occurs in a real path, and the pack's file_id appended to it makes the
 /// value unique under `UNIQUE (user_id, path)` by construction. A pack row is a
 /// LIVE row (never trashed or superseded), so the listing queries exclude this
@@ -177,7 +177,7 @@ pub fn basename(path: &str) -> &str {
 pub struct FileRow {
     pub file_id:      String,
     pub user_id:      String,
-    /// User-visible path — the one it occupies, or occupied before being retired.
+    /// User-visible path - the one it occupies, or occupied before being retired.
     pub path:         String,
     pub size:         i64,
     pub stored_bytes: i64,
@@ -239,7 +239,7 @@ pub struct ShardRow {
     pub hash:        String,
 }
 
-/// blake3 of shard bytes, hex — the canonical content hash stored in `hash`.
+/// blake3 of shard bytes, hex - the canonical content hash stored in `hash`.
 pub fn shard_hash(bytes: &[u8]) -> String {
     hex::encode(&blake3::hash(bytes).as_bytes()[..16])
 }
@@ -259,7 +259,7 @@ impl Manifest {
 
     /// Write a consistent, self-contained snapshot of the manifest to `dest`
     /// using `VACUUM INTO`. The snapshot inherits the connection's SQLCipher key,
-    /// so it is encrypted with the node's manifest key exactly like the live DB —
+    /// so it is encrypted with the node's manifest key exactly like the live DB -
     /// readable again only once the matching `identity.key` is restored.
     ///
     /// `VACUUM INTO` takes a whole-database read lock and produces a coherent copy
@@ -282,7 +282,7 @@ impl Manifest {
             std::fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(&self.path)?;
-        // Raw key form `x'HEX'` (64 hex chars = 32-byte key) — no KDF over our key.
+        // Raw key form `x'HEX'` (64 hex chars = 32-byte key) - no KDF over our key.
         conn.execute_batch(&format!("PRAGMA key = \"x'{}'\";", self.key_hex))?;
         conn.execute_batch(SCHEMA)?;
         // Additive migrations for manifests created before these columns existed.
@@ -298,7 +298,7 @@ impl Manifest {
         add_column_if_missing(&conn, "shards", "hash", "TEXT NOT NULL DEFAULT ''")?;
         // Trash + versioning. All four are nullable with no default, so every row
         // already in the manifest reads back as "live, current, first of its
-        // lineage" — exactly what it was before these columns existed.
+        // lineage" - exactly what it was before these columns existed.
         add_column_if_missing(&conn, "files", "retired_path", "TEXT")?;
         add_column_if_missing(&conn, "files", "deleted_at", "TEXT")?;
         add_column_if_missing(&conn, "files", "superseded_at", "TEXT")?;
@@ -320,7 +320,7 @@ impl Manifest {
 /// True if `table` already has a column named `column`.
 ///
 /// `PRAGMA table_info` accepts no bound parameter, but `table` is always a literal
-/// written in this module — never user input — so interpolating it is safe here.
+/// written in this module - never user input - so interpolating it is safe here.
 fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
     let mut rows = stmt.query([])?;
@@ -388,7 +388,7 @@ pub fn set_shard_location(conn: &Connection, fragment_id: &str, location: &str) 
 }
 
 /// The files a user currently sees: neither in the trash nor replaced by a newer
-/// version — and never a pack container, which is storage plumbing, not a file
+/// version - and never a pack container, which is storage plumbing, not a file
 /// the user ever uploaded under that name. This is what every listing/browsing
 /// path goes through.
 pub fn list_files(conn: &Connection, user_id: &str) -> Result<Vec<FileRow>> {
@@ -403,7 +403,7 @@ pub fn list_files(conn: &Connection, user_id: &str) -> Result<Vec<FileRow>> {
 }
 
 /// The user's trash: files they deleted, still restorable until purged. Most
-/// recently deleted first — that is the order a trash view reads in.
+/// recently deleted first - that is the order a trash view reads in.
 pub fn list_trashed(conn: &Connection, user_id: &str) -> Result<Vec<FileRow>> {
     // A pack is never trashed (it has no user-visible path to delete from), but
     // the exclusion is kept here too so no future caller can surface one.
@@ -418,7 +418,7 @@ pub fn list_trashed(conn: &Connection, user_id: &str) -> Result<Vec<FileRow>> {
     Ok(rows)
 }
 
-/// Every stored version of one logical file — the current one included — newest
+/// Every stored version of one logical file - the current one included - newest
 /// first. `lineage` is the value carried by [`FileRow::lineage`].
 pub fn list_lineage(conn: &Connection, user_id: &str, lineage: &str) -> Result<Vec<FileRow>> {
     let mut stmt = conn.prepare(&format!(
@@ -487,7 +487,7 @@ pub fn get_file(conn: &Connection, user_id: &str, file_id: &str) -> Result<Optio
 
 /// The file **currently** at `path` (retired rows park their path elsewhere, and
 /// the state predicate says so explicitly rather than relying on that). Pack
-/// container rows are excluded so no crafted path can address one by name —
+/// container rows are excluded so no crafted path can address one by name -
 /// they are reachable by file_id only.
 pub fn get_file_by_path(conn: &Connection, user_id: &str, path: &str) -> Result<Option<FileRow>> {
     let np = not_pack();
@@ -547,7 +547,7 @@ pub fn get_shards(conn: &Connection, chunk_id: &str) -> Result<Vec<ShardRow>> {
 /// `retired_path = COALESCE(retired_path, path)` keeps the FIRST path recorded: a
 /// version that was superseded and later has its whole lineage trashed must still
 /// remember where the user last saw it. `path = ?4` is unconditional because the
-/// key is derived from the primary key — re-applying it changes nothing.
+/// key is derived from the primary key - re-applying it changes nothing.
 ///
 /// `column` is a literal written in this module (never user input), so
 /// interpolating it is safe; SQLite has no way to bind a column name.
@@ -575,7 +575,7 @@ pub fn trash_file(conn: &Connection, user_id: &str, file_id: &str, at: &str) -> 
     retire_row(conn, user_id, file_id, "deleted_at", at)
 }
 
-/// Mark a file as replaced by a newer upload at the same path — it becomes a
+/// Mark a file as replaced by a newer upload at the same path - it becomes a
 /// version, not a deletion, so it is absent from the trash and listed only among
 /// its lineage's versions.
 pub fn supersede_file(conn: &Connection, user_id: &str, file_id: &str, at: &str) -> Result<bool> {
@@ -620,7 +620,7 @@ fn purge_candidates(
 ///
 /// String comparison is safe here because every stamp is written by
 /// `chrono::DateTime<Utc>::to_rfc3339`: fixed-width date and time, always the
-/// `+00:00` offset, and an optional fraction introduced by `.` — which sorts
+/// `+00:00` offset, and an optional fraction introduced by `.` - which sorts
 /// after the `+` of a fraction-less stamp in the same second, i.e. exactly the
 /// chronological order.
 pub fn trashed_before(conn: &Connection, cutoff: &str) -> Result<Vec<PurgeCandidate>> {
@@ -640,7 +640,7 @@ pub fn superseded_before(conn: &Connection, cutoff: &str) -> Result<Vec<PurgeCan
     purge_candidates(&mut stmt, params![cutoff])
 }
 
-/// Old versions past the `keep` most recent of their lineage, whatever their age —
+/// Old versions past the `keep` most recent of their lineage, whatever their age -
 /// the ceiling that keeps a file rewritten every minute from filling the node.
 /// `keep` counts PREVIOUS versions only; the current one is not ranked here.
 pub fn superseded_beyond(conn: &Connection, keep: i64) -> Result<Vec<PurgeCandidate>> {
@@ -657,14 +657,14 @@ pub fn superseded_beyond(conn: &Connection, keep: i64) -> Result<Vec<PurgeCandid
     purge_candidates(&mut stmt, params![keep])
 }
 
-/// Superseded versions whose lineage has nothing left to restore — no current
+/// Superseded versions whose lineage has nothing left to restore - no current
 /// file and nothing in the trash either.
 ///
 /// Without this, purging the last live file of a lineage strands its history: the
 /// old versions stop appearing in listings AND in the trash, yet keep occupying
 /// space and counting against the quota until they age out months later. Nothing
 /// can bring them back, since restoring is only ever offered for a live or trashed
-/// row — so they are dead weight, and reclaimed at once.
+/// row - so they are dead weight, and reclaimed at once.
 ///
 /// The guard is `superseded_at IS NULL` on the sibling: such a row is either live
 /// or in the trash, and both are restorable, so the history behind it must stay.
@@ -688,14 +688,14 @@ pub fn superseded_orphans(conn: &Connection) -> Result<Vec<PurgeCandidate>> {
 /// remove local shards from the store AND send `DeleteShard` to the peers hosting
 /// the remote ones.
 ///
-/// This is the only path that actually destroys data — the user-facing delete goes
+/// This is the only path that actually destroys data - the user-facing delete goes
 /// through [`trash_file`] and reaches this one only via the retention sweep or an
 /// explicit "delete permanently".
 ///
 /// The `JOIN files … WHERE f.user_id = ?2` is a safety filter, not just a match
 /// helper: without it this listed the shards of ANY file with this id, so a caller
 /// invoked with a mismatched `(user_id, file_id)` pair would delete another user's
-/// shards from the store while that user's manifest row survived — silent data
+/// shards from the store while that user's manifest row survived - silent data
 /// destruction. The `DELETE` was already scoped to the user; the SELECT now is too.
 pub fn purge_file_row(conn: &Connection, user_id: &str, file_id: &str) -> Result<Vec<(String, String)>> {
     let mut stmt = conn.prepare(
@@ -742,14 +742,14 @@ pub fn assign_to_pack(
 }
 
 /// Drop a file's own chunk rows (shards cascade) WITHOUT touching the file row,
-/// returning the `(fragment_id, location)` of every shard that was referenced —
+/// returning the `(fragment_id, location)` of every shard that was referenced -
 /// the same shape [`purge_file_row`] returns, for the same reason: the caller
 /// frees local shards and hands remote ones to the GC only after its transaction
 /// commits. Used when a file's bytes move into a pack: the row survives (id,
 /// path, lineage, history), only its private storage goes.
 ///
 /// The `JOIN files … user_id` guard mirrors `purge_file_row`: a mismatched
-/// `(user_id, file_id)` pair must select — and delete — nothing.
+/// `(user_id, file_id)` pair must select - and delete - nothing.
 pub fn strip_file_chunks(conn: &Connection, user_id: &str, file_id: &str) -> Result<Vec<(String, String)>> {
     let mut stmt = conn.prepare(
         "SELECT s.fragment_id, s.location FROM shards s
@@ -770,14 +770,14 @@ pub fn strip_file_chunks(conn: &Connection, user_id: &str, file_id: &str) -> Res
     Ok(frags)
 }
 
-/// Live, self-contained files of `user_id` no larger than `max_size` — the
+/// Live, self-contained files of `user_id` no larger than `max_size` - the
 /// candidates the small-file repack considers. Path order on purpose: files from
 /// the same folder tend to be fetched together, so packing neighbours together
 /// makes the "read one member = fetch the whole pack" cost more often amortised.
 ///
 /// `chunk_count > 0` keeps out rows that store nothing of their own (members are
 /// already excluded by `pack_id IS NULL`), and pack rows themselves are excluded
-/// by prefix — a partially-filled pack can be smaller than `max_size`.
+/// by prefix - a partially-filled pack can be smaller than `max_size`.
 pub fn packable_files(conn: &Connection, user_id: &str, max_size: i64) -> Result<Vec<FileRow>> {
     let np = not_pack();
     let mut stmt = conn.prepare(&format!(
@@ -825,13 +825,13 @@ pub fn pack_members(conn: &Connection, user_id: &str, pack_id: &str) -> Result<V
 /// by member rows, and how many member rows reference it.
 pub type PackOccupancy = (FileRow, i64, i64);
 
-/// Every pack on the node with its referenced bytes and member count — what the
+/// Every pack on the node with its referenced bytes and member count - what the
 /// compaction pass decides from. A pack referenced by no row at all is pure dead
 /// weight; one whose referenced bytes fall low enough is worth rewriting.
 pub fn pack_occupancy(conn: &Connection) -> Result<Vec<PackOccupancy>> {
     // The derived table's grouping column is renamed (`member_of`) so the
     // unqualified `pack_id` in FILE_COLS stays unambiguous and resolves against
-    // `p` (the pack row) — the aggregate join only appends two columns.
+    // `p` (the pack row) - the aggregate join only appends two columns.
     let mut stmt = conn.prepare(&format!(
         "SELECT {FILE_COLS}, COALESCE(m.bytes, 0), COALESCE(m.members, 0)
            FROM files p
@@ -911,8 +911,8 @@ pub fn delete_folder_subtree(conn: &Connection, user_id: &str, path: &str) -> Re
 /// Live files at or under `path` (the file itself, or every file inside a folder).
 /// Returns (file_id, path) pairs so the caller can free shards + re-key.
 ///
-/// Retired rows are excluded twice over — their `path` is a tombstone key that no
-/// user prefix matches, and the state predicate says so out loud — because both
+/// Retired rows are excluded twice over - their `path` is a tombstone key that no
+/// user prefix matches, and the state predicate says so out loud - because both
 /// callers (rename, trash) must only ever act on what the user can see.
 pub fn files_under(conn: &Connection, user_id: &str, path: &str) -> Result<Vec<(String, String)>> {
     let prefix = format!("{path}/");
@@ -1107,8 +1107,8 @@ mod tests {
         insert_file(&conn, &file_row("f2", "u", "notes.txt")).unwrap();
         assert_eq!(get_file_by_path(&conn, "u", "notes.txt").unwrap().unwrap().file_id, "f2");
 
-        // Restoring the old one supersedes nothing on its own — the caller frees the
-        // path first — but it does take its own path back.
+        // Restoring the old one supersedes nothing on its own - the caller frees the
+        // path first - but it does take its own path back.
         supersede_file(&conn, "u", "f2", "2026-04-01T00:00:00+00:00").unwrap();
         assert!(restore_file(&conn, "u", "f1", "notes.txt").unwrap());
         let row = get_file(&conn, "u", "f1").unwrap().unwrap();
@@ -1121,7 +1121,7 @@ mod tests {
     }
 
     /// History whose lineage has nothing restorable left is reclaimed at once;
-    /// history still backing a live — or merely trashed — file is not.
+    /// history still backing a live - or merely trashed - file is not.
     #[test]
     fn orphaned_history_is_reclaimable_but_restorable_history_is_not() {
         let dir = tmp_dir("orphans");
@@ -1140,7 +1140,7 @@ mod tests {
         // Nothing is orphaned yet: a2 is live, so a1 still backs a restorable file.
         assert!(superseded_orphans(&conn).unwrap().is_empty());
 
-        // Trashing a2 must NOT strand a1 — a trashed file can still be restored.
+        // Trashing a2 must NOT strand a1 - a trashed file can still be restored.
         trash_file(&conn, "u", "a2", "2026-01-03T00:00:00+00:00").unwrap();
         assert!(
             superseded_orphans(&conn).unwrap().is_empty(),
@@ -1214,7 +1214,7 @@ mod tests {
             assert!(assign_to_pack(&conn, "u", fid, "p1", off, len).unwrap());
         }
 
-        // Members visible, the container not — by listing, by path, anywhere.
+        // Members visible, the container not - by listing, by path, anywhere.
         let listed = list_files(&conn, "u").unwrap();
         assert_eq!(listed.len(), 2);
         assert!(listed.iter().all(|f| !f.is_pack()));

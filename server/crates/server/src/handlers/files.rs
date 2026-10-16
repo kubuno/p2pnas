@@ -80,7 +80,7 @@ pub async fn upload(
     // conclude there is room, and the account ends up over its ceiling with no
     // error anywhere. The conditional UPDATE takes the row lock, re-evaluates the
     // ceiling against the value in the table at that instant, and charges the
-    // upload atomically — the loser simply updates no row.
+    // upload atomically - the loser simply updates no row.
     //
     // An overwrite is charged its full new size and nothing is given back: the
     // version it replaces is KEPT as a restorable version, so those bytes are still
@@ -89,7 +89,7 @@ pub async fn upload(
     // row. `RETURNING` is not portable (MySQL), so success is read from
     // `rows_affected == 1`; the guarded update always changes `updated_at`, so a
     // matched row is never mistaken for a no-op. `used_bytes` is only reselected to
-    // preserve the original signature — the decision is `reserved.is_some()`.
+    // preserve the original signature - the decision is `reserved.is_some()`.
     let now = st.db.backend().now();
     let charged = st
         .db
@@ -123,9 +123,9 @@ pub async fn upload(
     if reserved.is_none() {
         // No row matched: either the account has no quota row at all, or charging
         // this upload would cross the ceiling. The figures below are the ones read
-        // a moment ago and are only indicative — the decision was taken under the
+        // a moment ago and are only indicative - the decision was taken under the
         // row lock, on the current value.
-        // The trash and the version history count too (deliberately — the bytes are
+        // The trash and the version history count too (deliberately - the bytes are
         // really there), so say so: emptying the trash is the one remedy the user
         // can apply without an administrator.
         return Err(P2pError::BadRequest(format!(
@@ -143,24 +143,24 @@ pub async fn upload(
     .await;
 
     // The quota was debited BEFORE the bytes were written, so every path that
-    // leaves without a stored file must hand it back — otherwise a failing upload
+    // leaves without a stored file must hand it back - otherwise a failing upload
     // silently eats the user's allowance until an administrator notices.
     let res = match pushed {
         Ok(Ok(res)) => res,
         Ok(Err(e)) => {
-            tracing::error!(error = %e, user_id = %user.id, "p2pnas upload: store push failed — refunding the quota reservation");
+            tracing::error!(error = %e, user_id = %user.id, "p2pnas upload: store push failed - refunding the quota reservation");
             adjust_user_used(&st, user.id, -size).await;
             return Err(e.into());
         }
         Err(e) => {
-            tracing::error!(error = %e, user_id = %user.id, "p2pnas upload: store task did not complete — refunding the quota reservation");
+            tracing::error!(error = %e, user_id = %user.id, "p2pnas upload: store task did not complete - refunding the quota reservation");
             adjust_user_used(&st, user.id, -size).await;
             return Err(join_err(e));
         }
     };
 
     // Identical re-upload: nothing was written, no version was created. Refund the
-    // whole reservation and stop here — charging for it, or re-running the peer
+    // whole reservation and stop here - charging for it, or re-running the peer
     // distribution, would make a sync client that re-pushes untouched files eat
     // its owner's quota for no new content.
     if res.unchanged {
@@ -174,14 +174,14 @@ pub async fn upload(
     }
 
     // Settle the reservation now that the outcome is known. There is nothing to
-    // refund on an overwrite any more — the previous version is retained, not
-    // destroyed — so this only corrects the reservation if the stored size ever
+    // refund on an overwrite any more - the previous version is retained, not
+    // destroyed - so this only corrects the reservation if the stored size ever
     // differed from the body we charged for.
     adjust_user_used(&st, user.id, res.size - size).await;
 
     // Node-wide stored bytes (data + parity, every user). Best-effort: the file IS
     // stored at this point, so a bookkeeping failure is logged rather than reported
-    // as a failed upload the client would retry — a retry would store it twice.
+    // as a failed upload the client would retry - a retry would store it twice.
     // The full new cost is added and none subtracted: the superseded version's
     // shards are still on disk until the retention sweep reclaims them.
     let stored_delta = res.stored_bytes;
@@ -202,7 +202,7 @@ pub async fn upload(
 
     // Nothing is orphaned by an overwrite any more: the previous version keeps its
     // shards (local AND remote) until it ages out of the version history, which is
-    // what `purge_retired_now` reclaims — remote shards included.
+    // what `purge_retired_now` reclaims - remote shards included.
 
     // Best-effort: spread the shards across peers (round-robin over [self] + peers).
     distribute_shards(&st, user.id, &res.file_id).await;
@@ -220,7 +220,7 @@ pub async fn upload(
 /// Move a user's accounted usage by `delta` (negative = refund), clamped at zero.
 ///
 /// Best-effort by design: it is called once the bytes have already been written or
-/// already been given up, so there is nothing left to abort — the drift is logged
+/// already been given up, so there is nothing left to abort - the drift is logged
 /// instead, since a 500 here would tell the client an upload failed that did not.
 async fn adjust_user_used(st: &AppState, user: uuid::Uuid, delta: i64) {
     if delta == 0 {
@@ -264,7 +264,7 @@ type VettedPeer = (String, String, Option<String>, f64);
 type LivePeer = (String, String, f64, Option<String>, f64);
 
 async fn distribute_shards(st: &AppState, user: uuid::Uuid, file_id: &str) {
-    // Skip peers already flagged `down` — they're known-bad, no point pinging.
+    // Skip peers already flagged `down` - they're known-bad, no point pinging.
     // `zone` and `reliability_score` ride along so placement can keep a chunk's
     // shards out of a single failure domain and prefer dependable hosts.
     let all_peers: Vec<PeerPlacementRow> = st
@@ -280,11 +280,11 @@ async fn distribute_shards(st: &AppState, user: uuid::Uuid, file_id: &str) {
     // Jurisdiction constraint: only place on peers in an allowed country. Country
     // is resolved by the maps GeoIP service (cached in peers.country). If maps is
     // unavailable we CANNOT vet peers, so we keep everything local rather than risk
-    // violating the constraint — and surface why.
+    // violating the constraint - and surface why.
     //
     // Source of the list: the admin console wins when it holds one, otherwise
     // config.toml stands. A BLANK console field means "nothing said here", never
-    // "no constraint" — clearing a textarea must not silently lift a restriction
+    // "no constraint" - clearing a textarea must not silently lift a restriction
     // an operator wrote into the file.
     let instance_allow = st.instance().jurisdiction_allow;
     let allow = if instance_allow.is_empty() {
@@ -316,7 +316,7 @@ async fn distribute_shards(st: &AppState, user: uuid::Uuid, file_id: &str) {
                             c
                         }
                         crate::maps_geoip::GeoOutcome::Unavailable => {
-                            tracing::warn!("jurisdiction constraint set but maps GeoIP unavailable — keeping shards local");
+                            tracing::warn!("jurisdiction constraint set but maps GeoIP unavailable - keeping shards local");
                             let _ = st
                                 .db
                                 .execute(
@@ -370,7 +370,7 @@ async fn distribute_shards(st: &AppState, user: uuid::Uuid, file_id: &str) {
     // Latency-aware plan (same for every chunk: shard index i → location).
     // Failure-domain aware: capping only per peer let the latency-first choice pile
     // a chunk's shards onto neighbours sharing one box, one power strip, one
-    // outage — which RS 10+4 does not survive. The zone recorded for the peer wins
+    // outage - which RS 10+4 does not survive. The zone recorded for the peer wins
     // over one derived from its address, so an operator can describe a topology no
     // IP range reveals.
     let candidates: Vec<crate::placement::PeerCandidate> = live
@@ -400,7 +400,7 @@ async fn distribute_shards(st: &AppState, user: uuid::Uuid, file_id: &str) {
         }
     }
 
-    // Move shards to their targets concurrently — one in-flight StoreShard per
+    // Move shards to their targets concurrently - one in-flight StoreShard per
     // placement instead of strictly sequential round-trips.
     let peers = Arc::new(peers);
     let mut set = tokio::task::JoinSet::new();
@@ -502,7 +502,7 @@ pub async fn file_health(
 }
 
 /// Placement map of a file: where each shard physically lives (this node or a
-/// peer), with the peer's latency / country / status — so the admin can SEE how
+/// peer), with the peer's latency / country / status - so the admin can SEE how
 /// data is distributed geographically and by latency.
 pub async fn file_placement(
     State(st): State<AppState>,
@@ -593,7 +593,7 @@ type PeerAddrs = std::collections::HashMap<String, String>;
 
 /// Fetch one shard (local read or P2P `GetShard`), verified against the manifest
 /// hash. Returns its index and bytes, or `None` when it is absent, unreachable or
-/// corrupt — all three are simply "lost" as far as erasure decoding is concerned.
+/// corrupt - all three are simply "lost" as far as erasure decoding is concerned.
 ///
 /// The integrity check is not optional. Reed-Solomon used as an *erasure* code
 /// cannot detect a bad shard, so a peer answering `GetShard` with flipped bytes
@@ -624,7 +624,7 @@ async fn fetch_shard_for_read(
             tracing::warn!(
                 fragment_id = %s.fragment_id,
                 location = %s.location,
-                "shard failed its integrity check on read — treating as lost"
+                "shard failed its integrity check on read - treating as lost"
             );
             (idx, None)
         }
@@ -637,7 +637,7 @@ async fn fetch_shard_for_read(
 ///
 /// All 14 are requested at once and the first 10 answers win: any 10 of the 14
 /// reconstruct the chunk, so waiting for the remaining tasks would mean paying the
-/// slowest holder's latency — or a dead host's full timeout — for bytes nothing
+/// slowest holder's latency - or a dead host's full timeout - for bytes nothing
 /// needs. Dropping the `JoinSet` cancels whatever is still in flight.
 async fn fetch_chunk_shards(
     st: &AppState,
@@ -687,7 +687,7 @@ fn spawn_chunk_fetch<I>(
 ///
 /// A pack member owns no shards: its bytes are a plaintext range of its
 /// container, so reading it means reconstructing the WHOLE pack (up to
-/// `PACK_TARGET`) and slicing — the read-amplification cost packing accepts in
+/// `PACK_TARGET`) and slicing - the read-amplification cost packing accepts in
 /// exchange for its ~40× write/storage saving on small files.
 async fn reconstruct_file(st: &AppState, uid: &str, file_id: &str) -> Result<Vec<u8>> {
     let (file, plan) = fetch_plan(st, uid, file_id).await?;
@@ -737,7 +737,7 @@ async fn fetch_and_reassemble(
             Ok(rows) => rows.into_iter().collect(),
             Err(e) => {
                 // Not fatal: local shards alone may still carry the file.
-                tracing::error!(error = %e, "p2pnas read: peer lookup failed — remote shards will be treated as lost");
+                tracing::error!(error = %e, "p2pnas read: peer lookup failed - remote shards will be treated as lost");
                 PeerAddrs::new()
             }
         };
@@ -755,7 +755,7 @@ async fn fetch_and_reassemble(
         spawn_chunk_fetch(&mut set, st, &peers, &mut queue);
     }
 
-    // 4. Reconstruct + decrypt — back in file order.
+    // 4. Reconstruct + decrypt - back in file order.
     fetched.sort_by_key(|(i, _, _)| *i);
     let chunks_fetched: Vec<(ChunkRow, Vec<Option<Vec<u8>>>)> =
         fetched.into_iter().map(|(_, chunk, present)| (chunk, present)).collect();
@@ -839,7 +839,7 @@ pub async fn mkdir(
     Ok(Json(json!({ "created": body.path })))
 }
 
-/// Rename or move a file/folder (path change only — no re-encryption).
+/// Rename or move a file/folder (path change only - no re-encryption).
 pub async fn rename(
     State(st): State<AppState>,
     Extension(user): Extension<P2pUser>,
@@ -856,12 +856,12 @@ pub async fn rename(
 //
 // Accounting policy, decided once and applied everywhere below.
 //
-// **A file in the trash — and an old version — still counts against the user's
+// **A file in the trash - and an old version - still counts against the user's
 // quota.** The bytes are genuinely there: on this node's disk and on the peers
 // hosting its shards. Discounting them would mean the node promises capacity it
 // does not have, and the first thing that breaks is a stranger's placement
 // request, not the user's own upload. Counting them also gives the trash the only
-// pressure that ever empties it — the user sees their allowance shrink and clears
+// pressure that ever empties it - the user sees their allowance shrink and clears
 // it, instead of a hidden pile growing until an administrator notices.
 //
 // Consequences, in one place:
@@ -882,7 +882,7 @@ fn retention_policy() -> p2pnas_store::service::RetentionPolicy {
 
 /// Move a file or a folder subtree to the trash (by path).
 ///
-/// Nothing is freed and no quota is credited — see `TRASH_COUNTS_AGAINST_QUOTA`.
+/// Nothing is freed and no quota is credited - see `TRASH_COUNTS_AGAINST_QUOTA`.
 pub async fn delete_path(
     State(st): State<AppState>,
     Extension(user): Extension<P2pUser>,
@@ -964,7 +964,7 @@ pub async fn versions(
     })))
 }
 
-/// Restore a trashed file — or an older version — as the live file at its path.
+/// Restore a trashed file - or an older version - as the live file at its path.
 ///
 /// One handler for both because it is one operation: a version and a trashed file
 /// are the same kind of retired row. If the target path is occupied, the occupant
@@ -984,7 +984,7 @@ pub async fn restore(
     Ok(Json(json!({ "restored": file.file_id, "path": file.path, "size": file.size })))
 }
 
-/// Permanently delete one trashed file or one old version. Irreversible — this is
+/// Permanently delete one trashed file or one old version. Irreversible - this is
 /// the only per-file path that destroys data, and the quota is credited here.
 pub async fn purge(
     State(st): State<AppState>,
@@ -1002,7 +1002,7 @@ pub async fn purge(
 }
 
 /// Permanently delete everything in the user's trash. Old versions of files they
-/// still have are left alone — the sweep ages those out.
+/// still have are left alone - the sweep ages those out.
 pub async fn empty_trash(
     State(st): State<AppState>,
     Extension(user): Extension<P2pUser>,
@@ -1077,7 +1077,7 @@ pub async fn purge_retired_now(st: &AppState) -> (usize, i64) {
     };
 
     // Per account, because a quota is per account. Best-effort per row: one user's
-    // failed credit must not strand the others' — the alternative is a sweep that
+    // failed credit must not strand the others' - the alternative is a sweep that
     // freed the bytes but told nobody.
     let be = st.db.backend();
     let (now, greatest) = (be.now(), crate::greatest(be));
@@ -1143,14 +1143,14 @@ pub async fn run_retention_purge(State(st): State<AppState>) -> Result<Json<Valu
 // Accounting for packs, in one place. The user's quota debits `size` (plaintext)
 // and a member keeps its `size`, so packing moves NO quota at all. What moves is
 // the node's `used_bytes`: a member's own shards are released and the pack's
-// shards (via `shard_disk_cost`, computed inside `push`/`pack_files`) are added —
+// shards (via `shard_disk_cost`, computed inside `push`/`pack_files`) are added -
 // always charged to the PACK, never to a member (whose `stored_bytes` is 0),
 // otherwise the same physical shards would be counted once per member.
 
 /// Live-bytes percentage under which a pack is worth rewriting: below half, the
 /// majority of what its 14 shards hold is bytes no row references any more, so a
 /// rewrite pays for itself. (`pack.size` includes the index trailer, so the ratio
-/// is slightly conservative — a pack compacts a touch later, never earlier.)
+/// is slightly conservative - a pack compacts a touch later, never earlier.)
 const PACK_COMPACT_MIN_LIVE_PCT: i64 = 50;
 
 /// What a repack or compaction pass moved, for the caller and the admin reply.
@@ -1195,7 +1195,7 @@ async fn settle_pack_write(st: &AppState, user_id: &str, r: p2pnas_store::servic
         match user_id.parse::<uuid::Uuid>() {
             Ok(uid) => distribute_shards(st, uid, pack_id).await,
             Err(e) => {
-                tracing::error!(user_id = %user_id, error = %e, "p2pnas packing: unparsable user id — pack shards stay local")
+                tracing::error!(user_id = %user_id, error = %e, "p2pnas packing: unparsable user id - pack shards stay local")
             }
         }
     }
@@ -1204,7 +1204,7 @@ async fn settle_pack_write(st: &AppState, user_id: &str, r: p2pnas_store::servic
 
 /// Regroup every user's small self-contained files into packs (deferred packing:
 /// the files were stored on the normal path first, so a crash anywhere here
-/// loses nothing — at worst a group stays autonomous until the next pass).
+/// loses nothing - at worst a group stays autonomous until the next pass).
 ///
 /// Node-wide and not user-facing: call it from the background worker (a
 /// `repack_small` job) and from the admin console.
@@ -1239,7 +1239,7 @@ pub async fn repack_all_now(st: &AppState) -> RepackTotals {
         };
         for group in p2pnas_store::service::plan_packs(candidates, p2pnas_store::service::PACK_TARGET as i64) {
             // Gather every member's plaintext over the normal (network-capable)
-            // read path — the members' shards may already live on peers.
+            // read path - the members' shards may already live on peers.
             let mut entries = Vec::with_capacity(group.len());
             for f in &group {
                 match reconstruct_file(st, &user, &f.file_id).await {
@@ -1250,7 +1250,7 @@ pub async fn repack_all_now(st: &AppState) -> RepackTotals {
                         // One unreadable member forfeits its whole group: better
                         // left autonomous for the repair pass than packed around
                         // a hole.
-                        tracing::warn!(file_id = %f.file_id, error = %e, "p2pnas repack: member unreadable — skipping its group");
+                        tracing::warn!(file_id = %f.file_id, error = %e, "p2pnas repack: member unreadable - skipping its group");
                         entries.clear();
                         break;
                     }
@@ -1273,7 +1273,7 @@ pub async fn repack_all_now(st: &AppState) -> RepackTotals {
                 // A failed pack rolls back whole: the files simply stay
                 // autonomous and the next pass retries them.
                 Ok(Err(e)) => {
-                    tracing::warn!(user_id = %user, error = %e, "p2pnas repack: pack write failed — files stay autonomous")
+                    tracing::warn!(user_id = %user, error = %e, "p2pnas repack: pack write failed - files stay autonomous")
                 }
                 Err(e) => tracing::error!(error = %e, "p2pnas repack: pack task did not complete"),
             }
@@ -1320,7 +1320,7 @@ pub async fn compact_packs_now(st: &AppState) -> RepackTotals {
 
     for (pack, live_bytes, members) in occupancy {
         if members > 0 && live_bytes * 100 >= pack.size * PACK_COMPACT_MIN_LIVE_PCT {
-            continue; // still mostly live — rewriting it would cost more than it frees
+            continue; // still mostly live - rewriting it would cost more than it frees
         }
         let survivors = if members == 0 {
             Vec::new()
@@ -1329,7 +1329,7 @@ pub async fn compact_packs_now(st: &AppState) -> RepackTotals {
             let plain = match reconstruct_file(st, &pack.user_id, &pack.file_id).await {
                 Ok(p) => p,
                 Err(e) => {
-                    tracing::warn!(pack_id = %pack.file_id, error = %e, "p2pnas compaction: pack unreadable — skipped");
+                    tracing::warn!(pack_id = %pack.file_id, error = %e, "p2pnas compaction: pack unreadable - skipped");
                     continue;
                 }
             };
@@ -1354,7 +1354,7 @@ pub async fn compact_packs_now(st: &AppState) -> RepackTotals {
                 match p2pnas_store::service::member_slice(&plain, &m) {
                     Ok(data) => entries.push(p2pnas_store::service::PackEntry { file_id: m.file_id, data }),
                     Err(e) => {
-                        tracing::error!(pack_id = %pack.file_id, error = %e, "p2pnas compaction: member range corrupt — pack left as is");
+                        tracing::error!(pack_id = %pack.file_id, error = %e, "p2pnas compaction: member range corrupt - pack left as is");
                         sliced_ok = false;
                         break;
                     }
@@ -1384,7 +1384,7 @@ pub async fn compact_packs_now(st: &AppState) -> RepackTotals {
                 totals.stored_delta += settle_pack_write(st, &pack.user_id, r).await;
             }
             Ok(Err(e)) => {
-                tracing::warn!(pack_id = %pack.file_id, error = %e, "p2pnas compaction: pack rewrite failed — left as is")
+                tracing::warn!(pack_id = %pack.file_id, error = %e, "p2pnas compaction: pack rewrite failed - left as is")
             }
             Err(e) => tracing::error!(error = %e, "p2pnas compaction: compaction task did not complete"),
         }

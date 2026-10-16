@@ -1,10 +1,10 @@
 /**
- * p2pnas module entry — loaded at runtime by the host, which calls `register()`.
+ * p2pnas module entry - loaded at runtime by the host, which calls `register()`.
  *
  * p2pnas declares NO launcher app / sidebar entry: it is a storage backend. It
  * publishes a "My Cloud" mount through ModuleServiceRegistry, which Drive picks
  * up and shows right after "Mon Drive". The mount is only offered to a user the
- * admin has actually granted a quota — otherwise My Cloud stays hidden. All
+ * admin has actually granted a quota - otherwise My Cloud stays hidden. All
  * node administration lives in the core admin console (Modules ▸ p2pnas).
  */
 import { ModuleServiceRegistry, SDK_VERSION, api, useAuthStore } from '@kubuno/sdk'
@@ -18,7 +18,7 @@ export const sdkVersion = SDK_VERSION
 let mountAvailable = false
 
 /**
- * Runs `task` once a user is signed in — immediately if a session is already
+ * Runs `task` once a user is signed in - immediately if a session is already
  * restored, otherwise on the first one to appear. The host imports module
  * bundles before authentication so that public routes exist, so asking for the
  * connected user's quota from `register()` would only earn a 401.

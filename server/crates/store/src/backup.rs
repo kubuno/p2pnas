@@ -10,8 +10,8 @@
 //! This module produces a single encrypted bundle {identity.key + a consistent
 //! manifest snapshot} that an administrator downloads and keeps OFF the node, and
 //! restores onto a fresh machine. The bundle is sealed under an admin passphrase
-//! (Argon2id → key → AES-256-GCM), so the downloaded file — which contains the
-//! master key — is safe at rest wherever it is stored.
+//! (Argon2id → key → AES-256-GCM), so the downloaded file - which contains the
+//! master key - is safe at rest wherever it is stored.
 //!
 //! Layout of the encrypted bundle:
 //!   MAGIC(8) | VERSION(1) | SALT(16) | ciphertext(plaintext + 16-byte GCM tag)
@@ -19,7 +19,7 @@
 //!   identity_key(32) | manifest_len(u64 BE) | manifest_bytes
 //!
 //! The bottom half of this file implements the AUTOMATIC counterpart of the same
-//! idea — a manifest snapshot erasure-coded onto the peers, with no human in the
+//! idea - a manifest snapshot erasure-coded onto the peers, with no human in the
 //! loop and no passphrase. See the section header down there for its format.
 
 use std::path::Path;
@@ -167,7 +167,7 @@ pub fn export(data_dir: &Path, manifest: &Manifest, passphrase: &str) -> Result<
 }
 
 /// Restore a backup bundle onto THIS node. Refuses to run when the node already
-/// holds data, so a restore can never clobber a live node — it is meant for a
+/// holds data, so a restore can never clobber a live node - it is meant for a
 /// fresh install recovering a dead one. The module must be restarted afterwards
 /// to reload the restored identity and reopen the manifest under its key.
 pub fn import(data_dir: &Path, manifest: &Manifest, passphrase: &str, blob: &[u8]) -> Result<()> {
@@ -195,7 +195,7 @@ pub fn import(data_dir: &Path, manifest: &Manifest, passphrase: &str, blob: &[u8
 /// Refuse to run a restore on a node that already holds files.
 ///
 /// A restore overwrites `manifest.db` wholesale, so running one on a live node
-/// would erase the only index of everything that node currently stores — the
+/// would erase the only index of everything that node currently stores - the
 /// exact disaster the backup exists to prevent. Restores are for a fresh install
 /// standing in for a dead machine, and nothing else.
 ///
@@ -252,7 +252,7 @@ fn write_identity(path: &Path, bytes: &[u8]) -> Result<()> {
 // The cold bundle above is only as good as the administrator's discipline: a node
 // whose disk dies before anyone ever pressed "download" is unrecoverable, even
 // though ~10 of every 14 shards are still sitting on peers. This section is the
-// automatic version — the node periodically pushes an encrypted, erasure-coded
+// automatic version - the node periodically pushes an encrypted, erasure-coded
 // snapshot of its own manifest onto the peers it already trusts with shards.
 //
 // The hard part is not the encryption, it is ADDRESSING. A restore starts with no
@@ -302,7 +302,7 @@ const BLOB_HASH_LEN: usize = 16;
 /// `MS_MAGIC | MS_FORMAT | version | shard_index | shard_len | blob_len | hash`.
 const MS_HEADER: usize = 8 + 1 + 8 + 1 + 4 + 8 + BLOB_HASH_LEN;
 
-/// A peer id is `hex(derive_raw("p2pnas/peer-id/v1")[..16])` — always 32 chars.
+/// A peer id is `hex(derive_raw("p2pnas/peer-id/v1")[..16])` - always 32 chars.
 const PEER_ID_LEN: usize = 32;
 
 /// Seconds in a day: the granularity of a backup version.
@@ -316,7 +316,7 @@ const SNAPSHOT_TMP: &str = "manifest.autobackup.tmp";
 /// The backup version for *now*: the number of whole days since the Unix epoch.
 ///
 /// Deriving the version from the clock rather than from a counter is what makes
-/// the whole scheme survivable. A counter would have to live somewhere — and the
+/// the whole scheme survivable. A counter would have to live somewhere - and the
 /// two places it could live (the manifest, the control-plane database) are
 /// exactly the ones a disaster may have taken with it. A day number is
 /// reproducible on a bare machine from the clock alone, so a restore can walk
@@ -333,7 +333,7 @@ pub fn manifest_backup_version_now() -> u64 {
 
 /// The deterministic address of one shard of one backup.
 ///
-/// `hex(blake3(DOMAIN ‖ peer_id ‖ version ‖ shard_index)[..16])` — 32 lowercase
+/// `hex(blake3(DOMAIN ‖ peer_id ‖ version ‖ shard_index)[..16])` - 32 lowercase
 /// hex characters, the only shape [`crate::ChunkStore`] accepts (anything else is
 /// rejected as a path-traversal attempt before it can touch a path).
 ///
@@ -353,7 +353,7 @@ pub fn manifest_backup_fragment_id(peer_id: &str, version: u64, shard_index: usi
 /// `(peer_id, version)`.
 ///
 /// Binding the VERSION into the key is not decoration. The sealer uses a counter
-/// nonce, and a fixed key would mean every backup reusing nonce 0 — a repeated
+/// nonce, and a fixed key would mean every backup reusing nonce 0 - a repeated
 /// (key, nonce) under GCM leaks both plaintexts via their XOR and makes forgery
 /// possible. A per-version key makes nonce 0 unique by construction, and it stays
 /// safe even if the clock jumps backwards and a version number is revisited with
@@ -392,7 +392,7 @@ pub fn seal_manifest_snapshot(
     plain.extend_from_slice(&(snapshot.len() as u64).to_be_bytes());
     plain.extend_from_slice(snapshot);
 
-    // Nonce 0 is safe because the key is unique per (node, version) — see
+    // Nonce 0 is safe because the key is unique per (node, version) - see
     // `manifest_backup_sealer`.
     manifest_backup_sealer(key, peer_id, version)?.seal(&mut plain, 0)?;
     Ok(plain)
@@ -402,7 +402,7 @@ pub fn seal_manifest_snapshot(
 ///
 /// Fails on the wrong node key, the wrong version, or a single flipped bit. The
 /// header checks that follow the tag verification are therefore redundancy, not
-/// security — they turn "this is not what we expected" into a message an operator
+/// security - they turn "this is not what we expected" into a message an operator
 /// can act on.
 pub fn open_manifest_snapshot(
     key: &DataKey,
@@ -443,7 +443,7 @@ pub fn open_manifest_snapshot(
 pub struct ManifestBackupShard {
     pub version:     u64,
     pub shard_index: usize,
-    /// Length of the sealed blob these shards reconstruct — needed to trim the
+    /// Length of the sealed blob these shards reconstruct - needed to trim the
     /// erasure padding, and unavailable anywhere else after a disaster.
     pub blob_len:    usize,
     pub blob_hash:   [u8; BLOB_HASH_LEN],
@@ -508,7 +508,7 @@ pub fn decode_manifest_backup_shard(bytes: &[u8]) -> Result<ManifestBackupShard>
 /// Rebuild the sealed blob from any [`DATA_SHARDS`] or more shards of one version.
 ///
 /// Two hostile-peer cases are handled explicitly, because Reed-Solomon in erasure
-/// mode is NOT error-correcting — one silently altered shard poisons the whole
+/// mode is NOT error-correcting - one silently altered shard poisons the whole
 /// reconstruction:
 ///
 ///   - **Disagreeing envelopes.** The `(blob_len, blob_hash)` pair is decided by
@@ -516,7 +516,7 @@ pub fn decode_manifest_backup_shard(bytes: &[u8]) -> Result<ManifestBackupShard>
 ///     cannot steer the reconstruction by lying about the geometry.
 ///   - **A corrupt payload.** The result is checked against `blob_hash` before it
 ///     is ever decrypted. On failure, and only when there are spare shards, each
-///     shard is excluded in turn and the reconstruction retried — a bounded
+///     shard is excluded in turn and the reconstruction retried - a bounded
 ///     `TOTAL_SHARDS` extra attempts that recovers from one bad copy.
 pub fn reassemble_manifest_backup(shards: &[ManifestBackupShard]) -> Result<Vec<u8>> {
     if shards.len() < DATA_SHARDS {
@@ -605,7 +605,7 @@ pub struct ManifestBackupBlob {
 /// "A + C" of the backup; the placement is the caller's business).
 ///
 /// The snapshot goes through `VACUUM INTO`, which takes a whole-database read
-/// lock and yields a coherent copy even while the manifest is being written to —
+/// lock and yields a coherent copy even while the manifest is being written to -
 /// so this is safe to run from a background job on a live node.
 pub fn build_manifest_backup(
     data_dir: &Path,
@@ -634,8 +634,8 @@ pub fn build_manifest_backup(
 
 /// Install a recovered snapshot as this node's `manifest.db`.
 ///
-/// Same guard as [`import`] — a restore is only ever legitimate on a node that
-/// holds nothing — and the same atomic write, so an interrupted restore can never
+/// Same guard as [`import`] - a restore is only ever legitimate on a node that
+/// holds nothing - and the same atomic write, so an interrupted restore can never
 /// leave a half-written manifest where the real one used to be. The module must
 /// be restarted afterwards: the running process holds an open handle on the old
 /// database.
@@ -729,7 +729,7 @@ mod tests {
             (0..TOTAL_SHARDS).map(|i| manifest_backup_fragment_id(a, 20_000, i)).collect();
         assert_eq!(ids.len(), TOTAL_SHARDS);
 
-        // The shape ChunkStore accepts — proven by actually storing under it,
+        // The shape ChunkStore accepts - proven by actually storing under it,
         // since the validator itself is private to that module.
         let root = std::env::temp_dir()
             .join(format!("p2pnas-mbackup-ids-{}", std::process::id()));
@@ -859,7 +859,7 @@ mod tests {
     }
 
     /// A version number must be strictly increasing over time and stable within
-    /// a day — the two properties the restore scan and the nonce safety rely on.
+    /// a day - the two properties the restore scan and the nonce safety rely on.
     #[test]
     fn version_is_a_day_number() {
         let v = manifest_backup_version_now();

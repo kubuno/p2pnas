@@ -6,7 +6,7 @@
 //!
 //! - **Durability**: every *location* (the owner's own store included) holds at
 //!   most `parity` shards, AND every *failure zone* holds at most `parity` shards.
-//!   Losing any single location — or any single zone — therefore leaves at least
+//!   Losing any single location - or any single zone - therefore leaves at least
 //!   `total - parity` (= DATA_SHARDS) shards reachable and the chunk
 //!   reconstructable.
 //! - **Reliability**: at comparable latency, a peer that has been answering
@@ -15,7 +15,7 @@
 //!   latency (the owner is latency 0), so normal reads gather nearby shards.
 //!
 //! The zone cap is what a per-peer cap alone cannot give: the greedy favours low
-//! latency, and low latency means "same LAN / same building / same ISP" — often
+//! latency, and low latency means "same LAN / same building / same ISP" - often
 //! the same power strip and the same box. Without a zone cap the neighbour's
 //! outage can take several shards at once, which RS 10+4 does not survive.
 //!
@@ -29,8 +29,8 @@ use std::net::{IpAddr, SocketAddr};
 
 /// Weight of the reliability penalty in the greedy score. The rtt term spans
 /// 0..1 (normalized) and the concentration term spans 0..1 (α·parity), so 0.5
-/// lets reliability outweigh a *moderate* latency difference — a peer at half
-/// score reliability loses against an equally-distant healthy peer — without ever
+/// lets reliability outweigh a *moderate* latency difference - a peer at half
+/// score reliability loses against an equally-distant healthy peer - without ever
 /// letting it outweigh a peer that is an order of magnitude nearer.
 const RELIABILITY_WEIGHT: f64 = 0.5;
 
@@ -54,7 +54,7 @@ pub struct PeerCandidate {
 }
 
 impl PeerCandidate {
-    /// A candidate with no zone information and full reliability — the values
+    /// A candidate with no zone information and full reliability - the values
     /// that reproduce the historical latency-only behaviour.
     pub fn new(rtt_ms: f64) -> Self {
         PeerCandidate { rtt_ms, zone: None, reliability: 100.0 }
@@ -118,7 +118,7 @@ pub fn plan_placement(peer_rtt: &[f64], total: usize, parity: usize) -> Vec<Plac
 ///
 /// `self_zone` is the owner's own failure zone, when known: pass `Some(z)` to
 /// have the owner share a zone budget with the peers in `z`, `None` to treat the
-/// owner as its own zone (the safe default — the owner's disk is already bounded
+/// owner as its own zone (the safe default - the owner's disk is already bounded
 /// by the per-location cap, and grouping it with its LAN neighbours would push
 /// most shards back onto that same disk when no distant peer exists).
 ///
@@ -309,7 +309,7 @@ mod tests {
         let p = plan_placement_zoned(&peers, None, 6, 4);
         assert!(
             count(&p, 0) > count(&p, 1),
-            "reliable peer holds {}, flaky peer holds {} — reliability did not break the tie",
+            "reliable peer holds {}, flaky peer holds {} - reliability did not break the tie",
             count(&p, 0),
             count(&p, 1)
         );
@@ -340,7 +340,7 @@ mod tests {
         assert_eq!(count(&shared, 1), 4, "the surplus must go to the distant zone");
 
         // Without the declaration the owner is its own zone, so the same eight
-        // shards never leave the LAN — that is exactly the risk the label fixes.
+        // shards never leave the LAN - that is exactly the risk the label fixes.
         let split = plan_placement_zoned(&peers, None, 8, 4);
         assert_eq!(count(&split, 1), 0);
     }

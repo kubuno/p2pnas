@@ -1,4 +1,4 @@
-//! A minimal standalone peer that hosts shards on disk — for testing the
+//! A minimal standalone peer that hosts shards on disk - for testing the
 //! distribution path against a running p2pnas node.
 //!   cargo run -p p2pnas-p2p --example shardhost -- 127.0.0.1:7475 /tmp/p2p-peer <peer_id>
 use std::path::PathBuf;

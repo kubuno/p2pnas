@@ -4,7 +4,7 @@
 //! it over the existing TCP transport via [`super::register_peer`]).
 //!
 //! Everything the DHT reports is attacker-influenced, and harvesting turns it
-//! into outbound TCP connections — so the harvest is filtered twice: the overlay
+//! into outbound TCP connections - so the harvest is filtered twice: the overlay
 //! only surfaces nodes that proved their address (`peer_addrs_verified`), and the
 //! address is re-checked against the [`AddrPolicy`] here before anything is
 //! contacted or written to the state file.
@@ -34,7 +34,7 @@ pub async fn run(
     let node = match p2pnas_p2p::DhtNode::bind(&bind_addr, &identity.peer_id, p2p_port).await {
         Ok(n) => n,
         Err(e) => {
-            tracing::warn!(error = %e, %bind_addr, "DHT: bind failed — wide-area discovery disabled");
+            tracing::warn!(error = %e, %bind_addr, "DHT: bind failed - wide-area discovery disabled");
             return;
         }
     };
@@ -79,7 +79,7 @@ pub async fn run(
                 tracing::info!(peer_id = %pid, %addr, "DHT: discovered peer");
             }
         }
-        // Persist the routing table for the next restart (verified entries only —
+        // Persist the routing table for the next restart (verified entries only -
         // see `DhtNode::export_nodes`).
         match serde_json::to_vec(&node.export_nodes().await) {
             Ok(bytes) => {

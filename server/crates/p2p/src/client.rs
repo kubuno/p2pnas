@@ -17,7 +17,7 @@ const IO_TIMEOUT: Duration = Duration::from_secs(30);
 ///
 /// Deliberately much shorter than [`CONNECT_TIMEOUT`]: reconstructing a file walks
 /// every chunk, and each chunk that still lists a shard on a host which has since
-/// gone offline pays a connect timeout again — a 1 GiB file is ~256 chunks, so the
+/// gone offline pays a connect timeout again - a 1 GiB file is ~256 chunks, so the
 /// default budget would add ~256 × 5 s of pure waiting to a read the erasure code
 /// can serve without that host at all. On the control plane the trade-off runs the
 /// other way (wrongly declaring a slow-but-alive peer dead costs durability), which
@@ -112,8 +112,8 @@ impl VerifiedPeer {
 /// Handshake that CHALLENGES the peer: it must sign our nonce with the key
 /// behind the `peer_id` it announces before we believe anything it says.
 ///
-/// Compatibility: a peer that cannot answer an `AuthPing` (older build — the
-/// frame does not even decode there — or one with no signing key) is retried with
+/// Compatibility: a peer that cannot answer an `AuthPing` (older build - the
+/// frame does not even decode there - or one with no signing key) is retried with
 /// the legacy `Ping`, and the result comes back with `public_key: None`. A peer
 /// that answers with a signature that does NOT verify is an impostor and yields
 /// an error; that case is never downgraded.
@@ -128,7 +128,7 @@ pub async fn handshake_verified(addr: &str, my_peer_id: &str, my_api_port: u16) 
         Ok(P2pMessage::AuthPong { peer_id, api_port, observed_addr, public_key, signature, .. }) => {
             let message = pong_transcript(&peer_id, api_port, &nonce, observed_addr.as_deref());
             if !verify_signature(&public_key, &message, &signature) {
-                tracing::warn!(addr, peer_id, "p2p handshake signature rejected — refusing the peer");
+                tracing::warn!(addr, peer_id, "p2p handshake signature rejected - refusing the peer");
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::PermissionDenied,
                     "handshake signature rejected",
@@ -138,7 +138,7 @@ pub async fn handshake_verified(addr: &str, my_peer_id: &str, my_api_port: u16) 
         }
         // Anything else (an `Error` reply, or a transport failure because the
         // remote could not decode an unknown variant) means "no authenticated
-        // handshake here" — fall back so a mixed-version network keeps working.
+        // handshake here" - fall back so a mixed-version network keeps working.
         other => {
             if let Err(e) = &other {
                 tracing::debug!(addr, error = %e, "authenticated handshake unavailable; falling back to Ping");
@@ -172,7 +172,7 @@ async fn legacy_handshake(
 /// (or refuses our proof), the message is retried as a plain request on a new
 /// connection and the remote's own policy decides whether to honour it (see the
 /// host's strict-auth switch). The one case never downgraded is the remote
-/// failing to prove ITS identity — we do not hand shards to an impostor.
+/// failing to prove ITS identity - we do not hand shards to an impostor.
 pub async fn authenticated_request(
     addr: &str,
     signer: &PeerSigner,
@@ -212,7 +212,7 @@ async fn authenticated_session(
         };
         write_message(&mut stream, &ping).await?;
 
-        // Leg 1 — the peer proves who it is (we are about to hand it our data).
+        // Leg 1 - the peer proves who it is (we are about to hand it our data).
         let (remote_peer_id, challenge) = match read_message(&mut stream).await? {
             P2pMessage::AuthPong { peer_id, api_port, observed_addr, public_key, signature, challenge } => {
                 let message = pong_transcript(&peer_id, api_port, &nonce, observed_addr.as_deref());
@@ -233,7 +233,7 @@ async fn authenticated_session(
             }
         };
 
-        // Leg 2 — we prove who we are, bound to the peer's challenge AND to its
+        // Leg 2 - we prove who we are, bound to the peer's challenge AND to its
         // identity, so this proof is worthless anywhere else.
         let proof = proof_transcript(&remote_peer_id, my_peer_id, &challenge);
         let signature = signer.sign_hex(&proof)?;

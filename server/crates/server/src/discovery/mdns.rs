@@ -20,7 +20,7 @@ pub async fn run(db: DbPool, identity: Arc<NodeIdentity>, api_port: u16, p2p_por
     let daemon = match ServiceDaemon::new() {
         Ok(d) => d,
         Err(e) => {
-            tracing::warn!(error = %e, "mDNS: daemon init failed — LAN discovery disabled");
+            tracing::warn!(error = %e, "mDNS: daemon init failed - LAN discovery disabled");
             return;
         }
     };
@@ -30,7 +30,7 @@ pub async fn run(db: DbPool, identity: Arc<NodeIdentity>, api_port: u16, p2p_por
     let receiver = match daemon.browse(SERVICE_TYPE) {
         Ok(r) => r,
         Err(e) => {
-            tracing::warn!(error = %e, "mDNS: browse failed — LAN discovery disabled");
+            tracing::warn!(error = %e, "mDNS: browse failed - LAN discovery disabled");
             return;
         }
     };
@@ -52,7 +52,7 @@ pub async fn run(db: DbPool, identity: Arc<NodeIdentity>, api_port: u16, p2p_por
                     continue;
                 }
                 // A service can advertise several interface addresses (LAN, docker,
-                // VPN…). Handshake them in turn and keep the first that answers —
+                // VPN…). Handshake them in turn and keep the first that answers -
                 // that's the one actually routable from here.
                 let port = info.get_port();
                 for ip in info.get_addresses() {
@@ -63,7 +63,7 @@ pub async fn run(db: DbPool, identity: Arc<NodeIdentity>, api_port: u16, p2p_por
                     }
                 }
             }
-            Ok(_) => {} // SearchStarted / ServiceFound / *Removed — nothing to do
+            Ok(_) => {} // SearchStarted / ServiceFound / *Removed - nothing to do
             Err(_) => {
                 // Channel closed/errored: back off, then keep trying.
                 tokio::time::sleep(Duration::from_secs(5)).await;

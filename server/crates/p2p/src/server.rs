@@ -69,7 +69,7 @@ pub trait ShardHandler: Send + Sync {
     /// Authenticated variant of [`store`](ShardHandler::store).
     ///
     /// `authenticated` is the identity the caller PROVED on this connection (see
-    /// [`AuthenticatedPeer`]), or `None` when it never authenticated — an older
+    /// [`AuthenticatedPeer`]), or `None` when it never authenticated - an older
     /// client, or one that chose not to. Hosts that care about authorization
     /// override this and decide what an unauthenticated write is worth; the
     /// default keeps the pre-authentication behaviour so existing implementors
@@ -208,7 +208,7 @@ async fn handle_conn(
             }
             // Never echo the request back: `{other:?}` on a large inbound frame
             // (e.g. a `ShardData` of 16 MiB sent in request position) builds a
-            // multi-megabyte Debug string and returns it — a ~5× amplification at
+            // multi-megabyte Debug string and returns it - a ~5× amplification at
             // no cost to the attacker. A fixed string is the only safe reply.
             _ => P2pMessage::Error { message: "unsupported request".into() },
         };
@@ -220,7 +220,7 @@ async fn handle_conn(
 /// caller authenticate itself on the same connection.
 ///
 /// Any failure answers a plain `Error`, which the caller treats as "this peer
-/// does not do authenticated handshakes" and downgrades to the legacy `Ping` —
+/// does not do authenticated handshakes" and downgrades to the legacy `Ping` -
 /// never a dropped connection.
 fn auth_pong(
     handler: &Arc<dyn ShardHandler>,

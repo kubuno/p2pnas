@@ -3,12 +3,12 @@
 //! Each node has a 160-bit id derived from its `peer_id`, a routing table of
 //! k-buckets keyed by XOR distance, and answers two RPCs: `Ping` and `FindNode`.
 //! Every message carries the sender's id + TCP P2P port, so a node learns the
-//! sender of any packet it receives — that, plus `FindNode` propagation, is what
+//! sender of any packet it receives - that, plus `FindNode` propagation, is what
 //! spreads knowledge of the "network of acquaintances" across the overlay.
 //!
 //! The discovery sink lives in the server: it periodically harvests
 //! [`DhtNode::peer_addrs_verified`] and handshakes each over the existing TCP
-//! transport. This module is purely the overlay (no value storage / republish —
+//! transport. This module is purely the overlay (no value storage / republish -
 //! discovery only). UDP sockets are allowed under the seccomp execve ban.
 //!
 //! # Hardening
@@ -17,17 +17,17 @@
 //! turns what we learn into outbound **TCP connections**. Three abuses are
 //! defended against here:
 //!
-//! - **SSRF / internal scanning** — addresses in node records are arbitrary, so
+//! - **SSRF / internal scanning** - addresses in node records are arbitrary, so
 //!   an attacker could have us probe `127.0.0.1:22` or a RFC1918 admin panel and
 //!   read the answer through timing. Every address is therefore checked against
 //!   [`is_routable_ip`] / [`is_contactable_port`] before it is learned, contacted,
 //!   persisted or handed to the discovery sink.
-//! - **UDP amplification** — a ~110-byte `FindNode` used to return K full records
+//! - **UDP amplification** - a ~110-byte `FindNode` used to return K full records
 //!   with a forgeable source IP (×6-7 reflector). An unverified source now gets
 //!   [`K_UNVERIFIED`] records and a challenge `Ping`; only a source that has
 //!   proved it really lives at its address (it answered a query *we* sent) gets a
 //!   full K-record answer.
-//! - **Poisoning / eclipse** — buckets used to drop newcomers and never expire
+//! - **Poisoning / eclipse** - buckets used to drop newcomers and never expire
 //!   the dead, so whoever filled them first owned our view forever. Buckets now
 //!   evict stale (preferably unverified) entries for a newcomer, and a single
 //!   source IP may only create [`LEARN_PER_WINDOW`] new entries per minute.
@@ -55,7 +55,7 @@ const MAX_DATAGRAM: usize = 16 * 1024;
 /// challenge `Ping`, so one round-trip later it is verified and gets the full K.
 const K_UNVERIFIED: usize = 2;
 
-/// Records absorbed from a single `Nodes` message — a peer cannot flood us with
+/// Records absorbed from a single `Nodes` message - a peer cannot flood us with
 /// a thousand records in one datagram.
 const MAX_NODES_PER_MSG: usize = K;
 
@@ -94,7 +94,7 @@ pub type NodeId = [u8; ID_LEN];
 /// Which peer addresses this node is willing to talk to.
 ///
 /// The DHT is the *wide-area* transport (the LAN is mDNS's job), so the default
-/// refuses everything that is not globally routable — that is what closes the
+/// refuses everything that is not globally routable - that is what closes the
 /// SSRF / internal-scan hole. [`AddrPolicy::AllowPrivate`] exists for test rigs
 /// and single-LAN deployments and must be an explicit opt-in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -106,7 +106,7 @@ pub enum AddrPolicy {
 
 impl AddrPolicy {
     /// Escape hatch for LAN/dev rigs: `P2PNAS_DHT_ALLOW_PRIVATE=1`. Strict
-    /// otherwise — a missing or unparsable value never weakens the policy.
+    /// otherwise - a missing or unparsable value never weakens the policy.
     pub fn from_env() -> Self {
         match std::env::var("P2PNAS_DHT_ALLOW_PRIVATE").as_deref() {
             Ok("1") | Ok("true") | Ok("yes") => AddrPolicy::AllowPrivate,
@@ -141,7 +141,7 @@ fn is_broadcast(ip: IpAddr) -> bool {
     matches!(ip, IpAddr::V4(v4) if v4.is_broadcast())
 }
 
-/// Is this address globally routable — i.e. plausibly a real peer on the
+/// Is this address globally routable - i.e. plausibly a real peer on the
 /// Internet rather than something inside our own trust perimeter?
 pub fn is_routable_ip(ip: IpAddr) -> bool {
     match ip {
@@ -170,7 +170,7 @@ fn is_routable_v4(ip: Ipv4Addr) -> bool {
 }
 
 fn is_routable_v6(ip: Ipv6Addr) -> bool {
-    // An IPv4-mapped address is really IPv4 — judge it as such, otherwise
+    // An IPv4-mapped address is really IPv4 - judge it as such, otherwise
     // `::ffff:127.0.0.1` would walk straight past the v6 checks.
     if let Some(v4) = ip.to_ipv4_mapped() {
         return is_routable_v4(v4);
@@ -250,7 +250,7 @@ struct Node {
     id:        NodeId,
     udp:       SocketAddr,
     p2p_port:  u16,
-    /// True once the node answered a query *we* sent to this exact address —
+    /// True once the node answered a query *we* sent to this exact address -
     /// proof the source address is not forged. Unverified entries are second-class:
     /// they are evicted first, get short answers, and are never persisted or
     /// handed to the discovery sink.
@@ -260,7 +260,7 @@ struct Node {
 
 /// Routing table of 160 k-buckets, LRU-ish: a re-seen node moves to the back of
 /// its bucket. A full bucket no longer refuses newcomers outright (that is what
-/// let an early attacker freeze our view) — it evicts the least-recently-seen
+/// let an early attacker freeze our view) - it evicts the least-recently-seen
 /// entry that has gone silent past [`STALE_AFTER`], unverified ones first, and
 /// only keeps the newcomer out when every incumbent still looks alive.
 struct RoutingTable {
@@ -526,7 +526,7 @@ impl DhtNode {
     }
 
     /// Seed the routing table from a previously exported snapshot. Restored
-    /// entries are *unverified* — the file could have been tampered with, so they
+    /// entries are *unverified* - the file could have been tampered with, so they
     /// must prove themselves again before they are trusted or re-persisted.
     pub async fn import_nodes(&self, nodes: Vec<PersistNode>) {
         let now = Instant::now();
@@ -551,7 +551,7 @@ impl DhtNode {
         self.collect_addrs(false).await
     }
 
-    /// TCP P2P addresses of the nodes that proved their address — what the
+    /// TCP P2P addresses of the nodes that proved their address - what the
     /// discovery sink should hand to the TCP transport. An unverified entry may
     /// carry any address a stranger felt like announcing, and connecting to it is
     /// precisely the SSRF primitive we refuse to offer.
@@ -615,7 +615,7 @@ impl DhtNode {
             };
             let Some(sa) = target else { continue };
             if !self.send(&find, sa).await {
-                // Most likely a LAN bootstrap under the strict policy — say so,
+                // Most likely a LAN bootstrap under the strict policy - say so,
                 // silence here would look like a network problem.
                 tracing::warn!(bootstrap = %a, "DHT: bootstrap address rejected by the address policy");
             }
@@ -695,7 +695,7 @@ impl DhtNode {
 
     async fn handle(&self, msg: DhtMsg, src: SocketAddr) {
         // 0. A datagram whose source we would never contact teaches us nothing and
-        //    gets no answer — that also stops us from reflecting toward it.
+        //    gets no answer - that also stops us from reflecting toward it.
         if !self.policy.accepts_ip(src.ip()) {
             tracing::trace!(%src, "DHT: datagram from a non-routable source ignored");
             return;
@@ -788,7 +788,7 @@ mod tests {
 
     #[test]
     fn non_routable_addresses_are_refused() {
-        // Everything inside our own trust perimeter — the SSRF targets.
+        // Everything inside our own trust perimeter - the SSRF targets.
         for s in [
             "127.0.0.1",
             "0.0.0.0",
@@ -853,7 +853,7 @@ mod tests {
     }
 
     /// An id whose first byte is `0x01`: with a zero `self_id` every such id has
-    /// the same most-significant differing bit, so they all land in ONE bucket —
+    /// the same most-significant differing bit, so they all land in ONE bucket -
     /// which is what makes the eviction rule testable.
     fn same_bucket_id(n: u8) -> NodeId {
         let mut id = [0u8; ID_LEN];
@@ -967,7 +967,7 @@ mod tests {
     #[tokio::test]
     async fn two_nodes_discover_each_other() {
         // A binds; B bootstraps off A. Both should learn each other's TCP port.
-        // Loopback needs the permissive policy — the strict default is exactly
+        // Loopback needs the permissive policy - the strict default is exactly
         // what forbids talking to 127.0.0.1.
         let p = AddrPolicy::AllowPrivate;
         let a = DhtNode::bind_with_policy("127.0.0.1:0", "dht-node-a", 7001, p).await.unwrap();

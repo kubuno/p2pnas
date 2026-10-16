@@ -1,5 +1,5 @@
 //! Thin client for the **maps** module's GeoIP service. p2pnas doesn't ship a
-//! GeoIP database — maps owns that — so we resolve a peer's country by calling
+//! GeoIP database - maps owns that - so we resolve a peer's country by calling
 //! maps through the core proxy. The call carries a user context (it runs inside
 //! an authenticated request such as upload), so the standard `/api/v1/maps/...`
 //! proxy is used rather than an internal endpoint.

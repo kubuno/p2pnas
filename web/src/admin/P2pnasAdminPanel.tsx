@@ -2,7 +2,7 @@
 // Modules ▸ p2pnas. Everything here used to live in a per-user "Settings" page,
 // but none of it was ever a real user preference: contribution, quotas, peers,
 // repair and metrics are all node-wide administrator actions. In the admin
-// console the connected user IS an admin, so the old isAdmin probing is gone —
+// console the connected user IS an admin, so the old isAdmin probing is gone -
 // each section simply loads its own data.
 import { useEffect, useState, Fragment } from 'react'
 import {
@@ -294,7 +294,7 @@ function TrustedPeers() {
                       ? <span className="inline-flex items-center gap-1 text-green-600"><Wifi className="w-3.5 h-3.5" /> en ligne</span>
                       : <span className="inline-flex items-center gap-1 text-text-tertiary"><WifiOff className="w-3.5 h-3.5" /> hors ligne</span>}
                   </td>
-                  <td className="py-1.5 text-xs">{p.rtt_ms != null ? <LatencyBadge ms={p.rtt_ms} /> : <span className="text-text-tertiary">—</span>}</td>
+                  <td className="py-1.5 text-xs">{p.rtt_ms != null ? <LatencyBadge ms={p.rtt_ms} /> : <span className="text-text-tertiary">-</span>}</td>
                   <td className="py-1.5"><ReliabilityBadge score={p.reliability_score} /></td>
                   <td className="py-1.5 text-text-tertiary text-xs">{timeAgo(p.last_seen)}</td>
                   <td className="py-1.5 text-right">
@@ -573,7 +573,7 @@ function FileDurability() {
                   <tr className="border-b border-border/60">
                     <td className="py-1.5 truncate max-w-xs" title={f.path}>{f.path}</td>
                     <td className="py-1.5 text-text-tertiary text-xs w-24">{formatBytes(f.size)}</td>
-                    <td className="py-1.5 w-56">{h ? <HealthBadge h={h} /> : <span className="text-text-tertiary text-xs">—</span>}</td>
+                    <td className="py-1.5 w-56">{h ? <HealthBadge h={h} /> : <span className="text-text-tertiary text-xs">-</span>}</td>
                     <td className="py-1.5 text-right whitespace-nowrap">
                       <button onClick={() => checkHealth(f)}
                         className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-surface-2 text-text-secondary hover:text-primary">

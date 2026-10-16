@@ -9,10 +9,10 @@ security reports seriously and are grateful to those who disclose responsibly.
 
 Report privately through either channel:
 
-- **GitHub Security Advisories** — use the *Report a vulnerability* button under
+- **GitHub Security Advisories** - use the *Report a vulnerability* button under
   the **Security** tab of this repository (preferred: it keeps the discussion
   private and lets us credit you).
-- **Email** — `security@toiledev.com`. Encrypt with our PGP key if the details
+- **Email** - `security@toiledev.com`. Encrypt with our PGP key if the details
   are sensitive (key fingerprint published at the project website).
 
 Please include, as far as you can:
@@ -71,7 +71,7 @@ not as it is meant to become.
 - **The operator of the node.** This is the most important limitation. A node has
   **one content key** (`identity.key`); it encrypts the data of *every* user of
   the instance, and the manifest key is derived from it. Isolation between users
-  is **logical** — a `user_id` filter in every manifest query — **not
+  is **logical** - a `user_id` filter in every manifest query - **not
   cryptographic**. Anyone who can read that file (the service user, root, or the
   holder of any copy of the data directory) can decrypt every account's files.
   If your threat model includes the person who runs the server, p2pnas as it
@@ -85,13 +85,13 @@ not as it is meant to become.
 - **Impersonation between peers.** Peers are **not yet cryptographically
   authenticated**. A peer id is simply a value claimed during the handshake;
   nothing binds it to a key pair, and no signature is verified. Trust in the peer
-  set is currently administrative — an administrator adds the peers this node will
-  deal with — and an attacker who can reach the peer-to-peer port and get itself
+  set is currently administrative - an administrator adds the peers this node will
+  deal with - and an attacker who can reach the peer-to-peer port and get itself
   into that list can be handed shards to host, and can answer for an id it does
   not own.
 - **Observers of the peer-to-peer network.** The transport is plain TCP carrying
   length-prefixed JSON frames: **no TLS, no Noise handshake**. Shard payloads are
-  ciphertext, but everything around them is in the clear — fragment identifiers,
+  ciphertext, but everything around them is in the clear - fragment identifiers,
   shard indexes and sizes, which node stores what for whom, and when it is read or
   written. Anyone on the path can therefore map storage relationships and observe
   access patterns even though they cannot read the contents. Run the peer-to-peer

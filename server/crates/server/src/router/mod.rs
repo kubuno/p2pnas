@@ -60,7 +60,7 @@ pub fn build(state: AppState) -> Router {
         .route("/rename", post(files::rename))
         .route("/delete", post(files::delete_path))
         // Trash & versions: deleting is now reversible, and an overwrite keeps the
-        // version it replaced. `/trash/restore` also restores a past version —
+        // version it replaced. `/trash/restore` also restores a past version -
         // it is the same operation on a retired row.
         .route("/trash", get(files::trash_list))
         .route("/trash/restore", post(files::restore))
@@ -88,7 +88,7 @@ pub fn build(state: AppState) -> Router {
     // and owns the browser-facing CORS policy. The `CorsLayer::permissive()` that
     // used to wrap the whole router therefore protected nothing while advertising
     // `Access-Control-Allow-Origin: *` with any method and any header on every
-    // route — admin ones included — and answering their preflights. If the port
+    // route - admin ones included - and answering their preflights. If the port
     // ever became reachable, that is a standing invitation for a hostile page to
     // read our responses. Any CORS added back belongs on a configured origin list,
     // not on `permissive()`.

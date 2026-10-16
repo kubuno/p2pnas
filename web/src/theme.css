@@ -1,4 +1,4 @@
-/* Tokens de thème Kubuno — source unique partagée par le host (index.css) ET
+/* Tokens de thème Kubuno - source unique partagée par le host (index.css) ET
    chaque bundle de module (module.css). Tailwind v4 lit ce `@theme` pour générer
    les utilitaires basés sur ces tokens ; les variables CSS sont posées sur :root
    (idempotent si plusieurs feuilles les redéclarent). */
@@ -6,7 +6,7 @@
   /* ── Couleurs primaires (bleu Google) ─────────────────── */
   --color-primary:       #1a73e8;
   --color-primary-hover: #1557b0;
-  --color-primary-light: #d3e3fd;   /* fond actif nav — Google M3 */
+  --color-primary-light: #d3e3fd;   /* fond actif nav - Google M3 */
 
   /* ── Surfaces / fonds ──────────────────────────────────── */
   --color-surface-0: #ffffff;
@@ -36,7 +36,7 @@
   --color-warning:       #f9ab00;
   --color-warning-light: #fef7e0;
 
-  /* ── Typographie — DM Sans (libre de droit) ────────────── */
+  /* ── Typographie - DM Sans (libre de droit) ────────────── */
   --font-family-sans: "DM Sans", Inter, system-ui, sans-serif;
   --font-family-mono: "DM Mono", "Fira Code", monospace;
 
@@ -48,7 +48,7 @@
   --radius-xl:  16px;
   --radius-2xl: 16px;
 
-  /* ── Thème — surchargeables au runtime ─────────────────── */
+  /* ── Thème - surchargeables au runtime ─────────────────── */
   --body-bg:               #f8fafd;
   --scrollbar-thumb:       #dadce0;
   --scrollbar-thumb-hover: #bdc1c6;

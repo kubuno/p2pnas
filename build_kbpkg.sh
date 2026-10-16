@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build_kbpkg.sh — the generic Kubuno package of a MODULE, identical on every system.
+# build_kbpkg.sh - the generic Kubuno package of a MODULE, identical on every system.
 #
 # Self-detecting: dropped as is into any module repository, it reads the id and the
 # version from module.toml (Cargo.toml as a fallback).
@@ -89,7 +89,7 @@ esac
 EXE="kubuno-${MODULE}"
 [[ "$OS" == "windows" ]] && EXE="kubuno-${MODULE}.exe"
 
-echo "==> ${MODULE} ${VERSION} — ${OS}/${ARCH}"
+echo "==> ${MODULE} ${VERSION} - ${OS}/${ARCH}"
 
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
   echo "==> Compilation"
@@ -109,7 +109,7 @@ BIN="${TARGET_ROOT}/release/${EXE}"
 HAS_FRONTEND=0
 if [[ -f "$WEB_DIR/package.json" ]]; then
   HAS_FRONTEND=1
-  [[ -d "$WEB_DIR/dist" ]] || { echo "$WEB_DIR/dist introuvable — construisez le frontend" >&2; exit 1; }
+  [[ -d "$WEB_DIR/dist" ]] || { echo "$WEB_DIR/dist introuvable - construisez le frontend" >&2; exit 1; }
 fi
 
 WORK="$(mktemp -d)"

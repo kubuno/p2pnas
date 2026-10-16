@@ -9,7 +9,7 @@
 //!     (`set_contribution`).
 //!
 //! Both read the SAME table. So an instance-wide default quota applied only in
-//! the upload check — an implicit allowance that exists nowhere in the table —
+//! the upload check - an implicit allowance that exists nowhere in the table -
 //! would be invisible to both: the console would keep offering capacity that
 //! implicit grants had already spent, and an administrator could shrink the
 //! contribution under storage users are entitled to. The over-commitment would
@@ -19,7 +19,7 @@
 //! first upload, capped by the capacity still unallocated at that instant. The
 //! grant is therefore always backed by contributed storage, both guards keep
 //! seeing the truth, and the administrator sees the account in the quota list
-//! exactly as if they had allocated it by hand — which they can then adjust.
+//! exactly as if they had allocated it by hand - which they can then adjust.
 //!
 //! When nothing is left to allocate no row is created and the upload is refused
 //! with the message it always used: an unbacked promise is worse than a refusal.
@@ -55,7 +55,7 @@ async fn read_row(db: &DbPool, user_id: Uuid) -> Result<Option<(i64, i64)>> {
 ///
 /// Returns `(quota_bytes, used_bytes, provisional)`. `provisional` is true when
 /// the account has no row yet and the figure is what `ensure` would grant it on
-/// its first upload — it is an announcement, not an allocation, so a second
+/// its first upload - it is an announcement, not an allocation, so a second
 /// account reading at the same moment may be told the same capacity.
 pub async fn effective(st: &AppState, user_id: Uuid) -> Result<(i64, i64, bool)> {
     if let Some((quota, used)) = read_row(&st.db, user_id).await? {
@@ -91,7 +91,7 @@ async fn unallocated(db: &DbPool) -> Result<i64> {
 /// as a real row the first time the account stores anything.
 ///
 /// Returns `(quota_bytes, used_bytes)`. `(0, 0)` when no default is configured or
-/// no capacity is left — the caller then refuses the upload as it always did.
+/// no capacity is left - the caller then refuses the upload as it always did.
 pub async fn ensure(st: &AppState, user_id: Uuid) -> Result<(i64, i64)> {
     if let Some(row) = read_row(&st.db, user_id).await? {
         return Ok(row);

@@ -1,5 +1,5 @@
 //! Orchestration: tie the core pipeline to the manifest + local shard store.
-//! Synchronous (the server wraps these in `spawn_blocking`). No networking yet —
+//! Synchronous (the server wraps these in `spawn_blocking`). No networking yet -
 //! all 14 shards of every chunk are stored locally (phase 3 distributes them).
 
 use chrono::Utc;
@@ -29,7 +29,7 @@ pub struct PushResult {
     /// Actual bytes written to the local shard store (data + parity).
     pub stored_bytes: i64,
     /// The version this push pushed aside, if the path was already taken. It is
-    /// KEPT (as a version), so nothing is refunded — its `size` and `stored_bytes`
+    /// KEPT (as a version), so nothing is refunded - its `size` and `stored_bytes`
     /// are reported only so the caller can tell the user what the trash/versions
     /// are now holding on their behalf.
     pub superseded_file_id: Option<String>,
@@ -47,7 +47,7 @@ pub struct PushResult {
 /// random `file_id` (the per-file subkey/nonce invariant demands it), so the
 /// previous version is already a complete, self-consistent file with its own
 /// chunks and shards. It is simply marked `superseded` and keeps every byte it
-/// had — that is the whole cost of versioning here. It stops being listed, stays
+/// had - that is the whole cost of versioning here. It stops being listed, stays
 /// restorable, and is reclaimed later by the retention sweep.
 pub fn push(
     id: &NodeIdentity,
@@ -59,7 +59,7 @@ pub fn push(
 ) -> Result<PushResult> {
     // Re-uploading identical bytes is the common case for a sync client that
     // re-pushes files it has not touched. Without this check each pass would
-    // store a whole new version — multiplying the parc by the version cap for no
+    // store a whole new version - multiplying the parc by the version cap for no
     // new content at all, and charging the user's quota for every copy. Hashing
     // the body costs a BLAKE3 pass (~1 GiB/s), invisible next to encryption.
     let content_hash = blake3_hex(data);
@@ -84,7 +84,7 @@ pub fn push(
 
     // New writes use scheme v2: the subkey is bound to the OWNER, and every chunk
     // authenticates its file, position and total count. `push` always mints a fresh
-    // file_id, so no already-stored version is affected — the parc migrates as files
+    // file_id, so no already-stored version is affected - the parc migrates as files
     // are rewritten.
     let chunks = pipeline::process_v2(
         data,
@@ -94,7 +94,7 @@ pub fn push(
         PipelineConfig::default(),
     )?;
     // Real on-disk cost: each chunk stores 14 shards, and each shard is a separate
-    // file occupying whole filesystem blocks (`shard_disk_cost`) — not just its
+    // file occupying whole filesystem blocks (`shard_disk_cost`) - not just its
     // logical length, which under-counted a small file's footprint by up to ~32×.
     let stored_bytes: i64 = chunks
         .iter()
@@ -110,7 +110,7 @@ pub fn push(
     // its chunks and its shards, and only loses the path (parked on a tombstone key
     // by `supersede_file`, so `UNIQUE (user_id, path)` lets the new row take it).
     // The new version joins the SAME lineage, which is what makes "show me the
-    // history of this file" a single indexed lookup — and what makes it survive a
+    // history of this file" a single indexed lookup - and what makes it survive a
     // later rename, since a lineage is not a path.
     let (superseded_file_id, superseded_size, superseded_stored, lineage) =
         match manifest::get_file_by_path(&tx, user_id, path)? {
@@ -146,7 +146,7 @@ pub fn push(
 
     tx.commit()?;
     // Nothing to free here any more: the previous version is retained, so no shard
-    // — local or remote — is orphaned by an overwrite. Reclaiming its space is the
+    // - local or remote - is orphaned by an overwrite. Reclaiming its space is the
     // retention sweep's job (`purge_retired`), which is also the only place that
     // hands remote shards back for deletion on their hosts.
     Ok(PushResult {
@@ -167,7 +167,7 @@ pub fn pull(id: &NodeIdentity, manifest: &Manifest, store: &ChunkStore, user_id:
 
     // A pack member owns no chunks: its bytes are a plaintext range of its
     // container. Reading a small member therefore costs reconstructing and
-    // decrypting the WHOLE pack (~PACK_TARGET) — the accepted price of packing,
+    // decrypting the WHOLE pack (~PACK_TARGET) - the accepted price of packing,
     // paid on the (rare) read instead of on every stored byte.
     if let Some(pack_id) = file.pack_id.clone() {
         let pack_row = manifest::get_file(&conn, user_id, &pack_id)?.ok_or_else(|| {
@@ -223,8 +223,8 @@ pub fn list_trash(manifest: &Manifest, user_id: &str) -> Result<Vec<FileRow>> {
     manifest::list_trashed(&conn, user_id)
 }
 
-/// Every stored version of the file `file_id` belongs to — the current one
-/// included — newest first. Works from any version of the lineage, so a client
+/// Every stored version of the file `file_id` belongs to - the current one
+/// included - newest first. Works from any version of the lineage, so a client
 /// holding an old file_id can still walk the history.
 pub fn list_versions(manifest: &Manifest, user_id: &str, file_id: &str) -> Result<Vec<FileRow>> {
     let conn = manifest.connect()?;
@@ -233,7 +233,7 @@ pub fn list_versions(manifest: &Manifest, user_id: &str, file_id: &str) -> Resul
 }
 
 /// Every row a user owns, whatever its state. For the account-deletion sweep,
-/// which must leave nothing behind — not a trashed file, not an old version.
+/// which must leave nothing behind - not a trashed file, not an old version.
 pub fn list_all_of_user(manifest: &Manifest, user_id: &str) -> Result<Vec<FileRow>> {
     let conn = manifest.connect()?;
     manifest::list_user_rows(&conn, user_id)
@@ -246,7 +246,7 @@ pub fn list_all_of_user(manifest: &Manifest, user_id: &str) -> Result<Vec<FileRo
 /// Historically only the local store was freed on delete/overwrite: the ~10 of 14
 /// shards placed on peers were never told to drop, so a host's usage grew without
 /// bound and the network eventually refused all new placement (contribution cap).
-/// A local delete failure is logged and skipped — freeing space is best-effort and
+/// A local delete failure is logged and skipped - freeing space is best-effort and
 /// must never abort a user-visible delete.
 ///
 /// Every caller is now a PERMANENT delete (`purge_file`, `empty_trash`,
@@ -304,7 +304,7 @@ impl TrashSummary {
     }
 }
 
-/// Move a file — or a whole folder subtree — to the trash, by path.
+/// Move a file - or a whole folder subtree - to the trash, by path.
 ///
 /// The explicit folder rows under `path` are removed (they hold no data), and a
 /// restore re-creates the ancestors of each file it brings back, so a folder
@@ -336,12 +336,12 @@ pub fn trash_path(manifest: &Manifest, user_id: &str, path: &str) -> Result<Tras
     Ok(summary)
 }
 
-/// Bring a trashed file — or an older version — back as the live file at its
+/// Bring a trashed file - or an older version - back as the live file at its
 /// path, or at `new_path` when one is given.
 ///
 /// If something already occupies the target path it is NOT overwritten: it becomes
 /// a version of its own lineage (exactly as an upload would make it), so a restore
-/// can never be the thing that loses data. Not a single shard moves — restoring is
+/// can never be the thing that loses data. Not a single shard moves - restoring is
 /// a metadata operation.
 pub fn restore(manifest: &Manifest, user_id: &str, file_id: &str, new_path: Option<&str>) -> Result<FileRow> {
     let mut conn = manifest.connect()?;
@@ -349,7 +349,7 @@ pub fn restore(manifest: &Manifest, user_id: &str, file_id: &str, new_path: Opti
 
     let file = manifest::get_file(&tx, user_id, file_id)?.ok_or(StoreError::NotFound)?;
     if file.is_live() {
-        // Nothing to restore — say so rather than silently doing nothing.
+        // Nothing to restore - say so rather than silently doing nothing.
         return Err(StoreError::NotFound);
     }
     let target = new_path.unwrap_or(&file.path).trim_matches('/');
@@ -452,7 +452,7 @@ pub struct PurgeReport {
     /// Per account, so the caller can give each user's quota back exactly what was
     /// freed for them.
     pub freed:  Vec<FreedPerUser>,
-    /// Shards on peers, in the same shape as [`purge_file`] returns — feed them to
+    /// Shards on peers, in the same shape as [`purge_file`] returns - feed them to
     /// the `gc_remote` job or the space is freed here and nowhere else.
     pub remote: Vec<RemoteShard>,
 }
@@ -511,13 +511,13 @@ pub fn purge_retired(
     })
 }
 
-/// `days` ago, RFC3339 — the form every state stamp is written in, so the
+/// `days` ago, RFC3339 - the form every state stamp is written in, so the
 /// comparison stays a plain string comparison in SQL.
 ///
 /// `days` is clamped to a century before being converted: a policy read from
 /// configuration must never be able to overflow a duration. A negative value would
-/// mean "purge into the future", i.e. everything, so it clamps to zero — "purge
-/// what has already expired" — instead.
+/// mean "purge into the future", i.e. everything, so it clamps to zero - "purge
+/// what has already expired" - instead.
 fn cutoff(days: i64) -> String {
     match chrono::Duration::try_days(days.clamp(0, 36_500)) {
         Some(d) => (Utc::now() - d).to_rfc3339(),
@@ -618,7 +618,7 @@ pub fn mkdir(manifest: &Manifest, user_id: &str, path: &str) -> Result<()> {
     manifest::insert_folder(&conn, user_id, path.trim_matches('/'))
 }
 
-/// Rename or move a file or folder from `from` to `to` (path change only — no
+/// Rename or move a file or folder from `from` to `to` (path change only - no
 /// re-encryption; file_ids and shards are untouched). Atomic.
 pub fn rename(manifest: &Manifest, user_id: &str, from: &str, to: &str) -> Result<()> {
     let from = from.trim_matches('/');
@@ -675,7 +675,7 @@ pub fn node_stats(manifest: &Manifest) -> Result<(i64, i64, i64)> {
 /// Rebuild every shard of a chunk from the surviving ones. `present[i]` holds
 /// shard `i`'s bytes (or None if it must be regenerated); RS needs ≥ DATA_SHARDS.
 /// Returns the 14 shard byte-vectors in index order, byte-identical to the
-/// originals (RS + padding are deterministic) — the repair path re-places only
+/// originals (RS + padding are deterministic) - the repair path re-places only
 /// the ones that were lost.
 pub fn regen_chunk_shards(present: &[Option<Vec<u8>>], cipher_len: usize) -> Result<Vec<Vec<u8>>> {
     let cipher = erasure::reconstruct(present, cipher_len)?;
@@ -709,7 +709,7 @@ pub fn read_local_verified(store: &ChunkStore, fragment_id: &str, expected: &str
     if verify_hash(&bytes, expected) {
         Some(bytes)
     } else {
-        tracing::warn!(fragment_id, "local shard failed integrity check (corrupt) — treating as lost");
+        tracing::warn!(fragment_id, "local shard failed integrity check (corrupt) - treating as lost");
         None
     }
 }
@@ -772,7 +772,7 @@ fn pad_shard(slice: &[u8], shard_len: usize) -> Vec<u8> {
 // ── Small-file packing ───────────────────────────────────────────────────────
 //
 // Why: every file, however tiny, is erasure-coded into 14 shards, each stored as
-// its own file occupying whole 4 KiB filesystem blocks — a 1 KiB file really
+// its own file occupying whole 4 KiB filesystem blocks - a 1 KiB file really
 // costs ~57 KiB on disk plus 14 manifest shard rows. Packing N small files into
 // one ~1 MiB container that goes through the pipeline ONCE amortises that fixed
 // cost across all of them (~1.4× instead of ~56×) and divides the shard/row
@@ -781,7 +781,7 @@ fn pad_shard(slice: &[u8], shard_len: usize) -> Vec<u8> {
 // How: a pack is an ordinary `files` row (hidden behind `PACK_PATH_PREFIX`, the
 // same trick retired rows use) whose plaintext is the members' bytes followed by
 // a self-describing index trailer. The pipeline, crypto, erasure coding, chunk
-// and shard handling are strictly unchanged — the pack's file_id plays exactly
+// and shard handling are strictly unchanged - the pack's file_id plays exactly
 // the role any file_id plays, so no cryptographic invariant is touched. A member
 // becomes a `(pack_id, pack_offset, pack_len)` triplet over that plaintext.
 //
@@ -801,7 +801,7 @@ pub const SMALL_MAX: usize = 256 * 1024;
 pub const PACK_TARGET: usize = 1024 * 1024;
 
 /// Trailer magic closing a pack's plaintext. With the index and its length in
-/// front of it, a pack can be re-inventoried from its bytes alone — a recovery
+/// front of it, a pack can be re-inventoried from its bytes alone - a recovery
 /// net if the manifest's member rows are ever lost.
 pub const PACK_MAGIC: [u8; 8] = *b"P2PNPAK1";
 
@@ -818,12 +818,12 @@ pub struct PackResult {
     pub pack_id: Option<String>,
     /// Plaintext size of the new pack (members + index trailer).
     pub pack_size: i64,
-    /// Disk cost of the new pack's shards — what the node's `used_bytes` gains.
+    /// Disk cost of the new pack's shards - what the node's `used_bytes` gains.
     pub pack_stored_bytes: i64,
     /// Member rows now pointing at the new pack.
     pub members: usize,
     /// Disk cost released by the storage this pack replaced (the members' own
-    /// shards, or the old pack's) — what the node's `used_bytes` gives back.
+    /// shards, or the old pack's) - what the node's `used_bytes` gives back.
     pub freed_stored_bytes: i64,
     /// Replaced shards hosted on peers, in the `gc_remote` shape.
     pub remote: Vec<RemoteShard>,
@@ -889,7 +889,7 @@ fn take<'a>(cur: &mut &'a [u8], n: usize) -> Option<&'a [u8]> {
     Some(head)
 }
 
-/// Re-read a pack's member index from its plaintext trailer — the recovery path
+/// Re-read a pack's member index from its plaintext trailer - the recovery path
 /// for a manifest that lost its member rows, and what the tests use to check the
 /// on-disk format. The manifest columns remain the fast path for normal reads.
 pub fn parse_pack_index(pack_plain: &[u8]) -> Result<Vec<PackIndexEntry>> {
@@ -950,7 +950,7 @@ pub fn member_slice(pack_plain: &[u8], member: &FileRow) -> Result<Vec<u8>> {
 ///
 /// Like `push`, the shard bytes hit the local store before the transaction
 /// commits: a rollback can at worst strand unreferenced shard files (the same
-/// exposure `push` accepts) — never the reverse, rows pointing at absent bytes.
+/// exposure `push` accepts) - never the reverse, rows pointing at absent bytes.
 fn insert_pack_row(
     id: &NodeIdentity,
     store: &ChunkStore,
@@ -1003,7 +1003,7 @@ fn mint_file_id() -> String {
 
 /// Group packing (or compaction) candidates into pack loads: consecutive files
 /// (they arrive path-ordered, so folder neighbours pack together) up to
-/// `PACK_TARGET` plaintext per pack. Groups of one are dropped — packing a lone
+/// `PACK_TARGET` plaintext per pack. Groups of one are dropped - packing a lone
 /// file adds a container row and frees nothing.
 pub fn plan_packs(files: Vec<FileRow>, target: i64) -> Vec<Vec<FileRow>> {
     let mut groups: Vec<Vec<FileRow>> = Vec::new();
@@ -1027,13 +1027,13 @@ pub fn plan_packs(files: Vec<FileRow>, target: i64) -> Vec<Vec<FileRow>> {
 /// Move the given files' bytes into one new pack, atomically.
 ///
 /// In a single manifest transaction: every member row is re-checked (still
-/// present, still self-contained, same size as the plaintext handed in — a
+/// present, still self-contained, same size as the plaintext handed in - a
 /// mismatch means the world moved under the caller and the whole pack is rolled
 /// back), its own chunks are dropped (collecting their shard locations), and the
 /// row is pointed at `(pack_id, offset, len)` with `chunk_count = 0`. The pack
 /// row and its chunks/shards are written through the same transaction. Only
 /// AFTER the commit are the members' old shards freed locally; the peer-hosted
-/// ones are returned for the remote GC — the collect-in-tx / act-after-commit
+/// ones are returned for the remote GC - the collect-in-tx / act-after-commit
 /// motif every purge path here follows.
 ///
 /// A member trashed or superseded since it was selected still packs correctly:
@@ -1087,14 +1087,14 @@ pub fn pack_files(
 /// Rewrite a pack around its `survivors` (every row still referencing it), or
 /// purge it outright when nothing references it any more.
 ///
-/// Deleting a member only stamps its row (trash semantics — nothing freed, fully
+/// Deleting a member only stamps its row (trash semantics - nothing freed, fully
 /// restorable); the dead bytes in the pack are reclaimed here, once enough
 /// members have been PURGED that the pack is mostly garbage. Same transaction
 /// shape as [`pack_files`]: repoint the survivors to a new pack, drop the old
 /// pack row (its chunks and shards cascade), commit, then free/return the old
 /// shards.
 ///
-/// Every row still pointing at `old_pack_id` must be among `survivors` —
+/// Every row still pointing at `old_pack_id` must be among `survivors` -
 /// trashed and superseded members included, or purging the old pack would
 /// destroy bytes a restore still needs. A missing one aborts the compaction.
 pub fn compact_pack(
@@ -1167,7 +1167,7 @@ pub fn compact_pack(
 }
 
 /// Regroup one user's small self-contained files into packs, reading their
-/// plaintext through the LOCAL pull path — suitable for a node whose shards are
+/// plaintext through the LOCAL pull path - suitable for a node whose shards are
 /// still local (and for tests). The server-side pass reads over the network
 /// instead and drives [`pack_files`] itself with the same planning helpers.
 pub fn repack_small_files(
@@ -1537,7 +1537,7 @@ mod tests {
     }
 
     /// A file above `SMALL_MAX` is never a candidate, and a lone small file is
-    /// left alone — packing it would add a row and free nothing.
+    /// left alone - packing it would add a row and free nothing.
     #[test]
     fn oversized_and_lone_files_are_never_packed() {
         let n = node("pack-limits");

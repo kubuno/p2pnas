@@ -21,7 +21,7 @@ fn shard_len(cipher_len: usize) -> usize {
 /// Each shard is stored as its OWN file, so it occupies whole filesystem blocks:
 /// a 128-byte shard still consumes a full 4 KiB block. Counting the logical shard
 /// length instead under-reports the real footprint by up to ~32× for tiny files,
-/// which let the node believe it had far more free capacity than it did — and let
+/// which let the node believe it had far more free capacity than it did - and let
 /// a host accept more than it could actually hold. 4096 is the near-universal
 /// default (ext4/xfs/btrfs); the correction matters for small shards, where the
 /// error was huge, and is negligible for large ones whatever the true block size.
@@ -86,7 +86,7 @@ pub fn data_shard(cipher: &[u8], sl: usize, i: usize) -> Option<&[u8]> {
 }
 
 /// Materialise all 14 shards (10 data + 4 parity). Convenience for tests and
-/// non-hot paths — the hot pipeline uses `encode_recovery` instead.
+/// non-hot paths - the hot pipeline uses `encode_recovery` instead.
 pub fn encode(cipher: &[u8]) -> Result<Vec<Vec<u8>>, CoreError> {
     let (mut shards, _sl) = data_shards(cipher);
     let recovery = reed_solomon_simd::encode(DATA_SHARDS, PARITY_SHARDS, &shards)
@@ -99,7 +99,7 @@ pub fn encode(cipher: &[u8]) -> Result<Vec<Vec<u8>>, CoreError> {
 /// `DATA_SHARDS` surviving shards. `present[i]` is `Some` if shard `i` is held.
 pub fn reconstruct(present: &[Option<Vec<u8>>], cipher_len: usize) -> Result<Vec<u8>, CoreError> {
     // Fast path (the local, no-loss case): every data shard is present, so just
-    // concatenate them and trim the padding — no RS decode needed.
+    // concatenate them and trim the padding - no RS decode needed.
     if present.iter().take(DATA_SHARDS).all(|s| s.is_some()) {
         let mut out = Vec::with_capacity(cipher_len);
         for s in present.iter().take(DATA_SHARDS) {
@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn shard_disk_cost_rounds_up_to_blocks() {
-        // A tiny shard still costs a whole block — this is the ~32× under-count
+        // A tiny shard still costs a whole block - this is the ~32× under-count
         // the accounting fix is about.
         assert_eq!(shard_disk_cost(1), STORAGE_BLOCK_SIZE);
         assert_eq!(shard_disk_cost(128), STORAGE_BLOCK_SIZE);

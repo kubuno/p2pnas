@@ -1,5 +1,5 @@
 //! Runs the p2pnas **control plane** against a real server of each engine, from a
-//! single compiled binary — the proof that the engine is a run-time choice, not a
+//! single compiled binary - the proof that the engine is a run-time choice, not a
 //! build-time one. Only the control plane goes through kubuno-db; the encrypted
 //! SQLCipher manifest (crates/store) is a separate concern and is not exercised
 //! here.

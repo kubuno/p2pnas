@@ -3,7 +3,7 @@ name        = "p2pnas-store"
 version     = "0.1.0"
 edition     = "2021"
 license     = "AGPL-3.0-only"
-description = "p2pnas — node identity, SQLCipher manifest and local shard store"
+description = "p2pnas - node identity, SQLCipher manifest and local shard store"
 
 [dependencies]
 p2pnas-core = { path = "../core" }
