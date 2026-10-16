@@ -145,8 +145,8 @@ pub fn push(
     write_chunk_rows(store, &tx, &file_id, &chunks)?;
 
     tx.commit()?;
-    // Nothing to free here any more: the previous version is retained, so no shard
-    // - local or remote - is orphaned by an overwrite. Reclaiming its space is the
+    // Nothing to free here any more: the previous version is retained, so no shard -
+    // local or remote - is orphaned by an overwrite. Reclaiming its space is the
     // retention sweep's job (`purge_retired`), which is also the only place that
     // hands remote shards back for deletion on their hosts.
     Ok(PushResult {
