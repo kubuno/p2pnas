@@ -118,8 +118,8 @@ async fn fallback_reference(st: &AppState, owner: &str) -> DateTime<Utc> {
     latest.flatten().unwrap_or_else(Utc::now)
 }
 
-/// Remove hosted shards for `owner` - parity only (`parity_only`) or all of them
-/// - from both the shard store and the bookkeeping, and give the freed bytes back
+/// Remove hosted shards for `owner` - parity only (`parity_only`) or all of them -
+/// from both the shard store and the bookkeeping, and give the freed bytes back
 /// to the contribution budget. Returns (count removed, bytes freed).
 async fn reclaim(st: &AppState, owner: &str, parity_only: bool) -> (usize, i64) {
     let rows: Vec<(String, i64)> = if parity_only {
